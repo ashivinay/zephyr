@@ -12,10 +12,12 @@
 #include <sys/byteorder.h>
 #include <soc.h>
 #include <drivers/clock_control.h>
+#include "fsl_usdhc.h"
 
 #include "sdmmc_sdhc.h"
 
 #include <logging/log.h>
+
 LOG_MODULE_REGISTER(usdhc, CONFIG_SDMMC_LOG_LEVEL);
 
 enum usdhc_cmd_type {
@@ -515,6 +517,7 @@ enum usdhc_xfer_data_type {
 #define CARD_BUS_STRENGTH_6 (6U)
 #define CARD_BUS_STRENGTH_7 (7U)
 
+
 enum usdhc_adma_flag {
 	USDHC_ADMA_SINGLE_FLAG = 0U,
 	USDHC_ADMA_MUTI_FLAG = 1U,
@@ -654,6 +657,7 @@ enum usdhc_capability_flag {
 };
 
 #define NXP_SDMMC_MAX_VOLTAGE_RETRIES (1000U)
+#define NXP_USDHC_MAX_CMD_RETRIES 10
 
 #define CARD_DATA0_STATUS_MASK USDHC_DATA0_LINE_LEVEL_FLAG
 #define CARD_DATA1_STATUS_MASK USDHC_DATA1_LINE_LEVEL_FLAG
@@ -716,12 +720,9 @@ enum usdhc_reset {
 	/*!< All reset types */
 };
 
-static void usdhc_millsec_delay(unsigned int cycles_to_wait)
+static inline void usdhc_millsec_delay(unsigned int cycles_to_wait)
 {
-	unsigned int start = sys_clock_cycle_get_32();
-
-	while (sys_clock_cycle_get_32() - start < (cycles_to_wait * 1000))
-		;
+	k_busy_wait(cycles_to_wait * 1000U);
 }
 
 uint32_t g_usdhc_boot_dummy __aligned(64);
@@ -1467,20 +1468,19 @@ static int usdhc_xfer(struct usdhc_priv *priv)
 	return error;
 }
 
-static inline void usdhc_select_1_8_vol(USDHC_Type *base, bool en_1_8_v)
+static inline int usdhc_select_1_8_vol(USDHC_Type *base, bool en_1_8_v)
 {
-	if (en_1_8_v)
+	if (en_1_8_v) {
 		base->VEND_SPEC |= USDHC_VEND_SPEC_VSELECT_MASK;
-	else
+	} else {
 		base->VEND_SPEC &= ~USDHC_VEND_SPEC_VSELECT_MASK;
+	}
+	return 0;
 }
 
 static inline void usdhc_force_clk_on(USDHC_Type *base, bool on)
 {
-	if (on)
-		base->VEND_SPEC |= USDHC_VEND_SPEC_FRC_SDCLK_ON_MASK;
-	else
-		base->VEND_SPEC &= ~USDHC_VEND_SPEC_FRC_SDCLK_ON_MASK;
+	USDHC_ForceClockOn(base, on);
 }
 
 static void usdhc_tuning(USDHC_Type *base, uint32_t start, uint32_t step, bool enable)
@@ -1540,11 +1540,20 @@ static inline void usdhc_set_retuning_timer(USDHC_Type *base, uint32_t counter)
 	base->HOST_CTRL_CAP |= USDHC_HOST_CTRL_CAP_TIME_COUNT_RETUNING(counter);
 }
 
-static inline void usdhc_set_bus_width(USDHC_Type *base,
-	enum usdhc_data_bus_width width)
+static inline void usdhc_op_ctx_init(struct usdhc_priv *priv,
+	bool cmd_only, uint8_t cmd_idx, uint32_t arg, enum sdhc_rsp_type rsp_type)
 {
-	base->PROT_CTRL = ((base->PROT_CTRL & ~USDHC_PROT_CTRL_DTW_MASK) |
-		USDHC_PROT_CTRL_DTW(width));
+	struct usdhc_cmd *cmd = &priv->op_context.cmd;
+	struct usdhc_data *data = &priv->op_context.data;
+
+	priv->op_context.cmd_only = cmd_only;
+
+	memset((char *)cmd, 0, sizeof(struct usdhc_cmd));
+	memset((char *)data, 0, sizeof(struct usdhc_data));
+
+	cmd->index = cmd_idx;
+	cmd->argument = arg;
+	cmd->rsp_type = rsp_type;
 }
 
 static int usdhc_execute_tuning(struct usdhc_priv *priv)
@@ -1600,60 +1609,77 @@ static int usdhc_execute_tuning(struct usdhc_priv *priv)
 	return 0;
 }
 
+static int usdhc_pwr_ctrl(struct usdhc_priv *priv, bool enable)
+{
+	int ret = 0;
+	const struct usdhc_config *config = priv->config;
+
+	if (priv->pwr_gpio) {
+		if (enable) {
+			/** Power the SD card */
+			ret = gpio_pin_set(priv->pwr_gpio,
+				config->pwr_pin, 1);
+		} else {
+			/** Power the SD card off */
+			ret = gpio_pin_set(priv->pwr_gpio,
+				config->pwr_pin, 0);
+		}
+		/** Let the card respond to power change */
+		usdhc_millsec_delay(100U);
+	}
+	return ret;
+}
+
 static int usdhc_vol_switch(struct usdhc_priv *priv)
 {
 	USDHC_Type *base = priv->config->base;
-	int retry = 0xffff;
+	int ret = 0;
 
-	while (base->PRES_STATE &
+	usdhc_op_ctx_init(priv, 1, SDHC_VOL_SWITCH, 0, SDHC_RSP_TYPE_R1);
+
+	ret = usdhc_xfer(priv);
+	if (ret) {
+		return ret;
+	}
+
+	/** Check data and cmd line states */
+	if (base->PRES_STATE &
 		(CARD_DATA1_STATUS_MASK | CARD_DATA2_STATUS_MASK |
 		CARD_DATA3_STATUS_MASK | CARD_DATA0_NOT_BUSY)) {
-		retry--;
-		if (retry <= 0) {
-			return -EACCES;
-		}
+		ret = -EACCES;
+		return ret;
 	}
 
 	/* host switch to 1.8V */
 	usdhc_select_1_8_vol(base, true);
 
-	usdhc_millsec_delay(20000U);
+	usdhc_millsec_delay(100U);
 
 	/*enable force clock on*/
 	usdhc_force_clk_on(base, true);
-	/* dealy 1ms,not exactly correct when use while */
-	usdhc_millsec_delay(20000U);
+	/* delay 10ms,not exactly correct when use while */
+	usdhc_millsec_delay(10U);
 	/*disable force clock on*/
 	usdhc_force_clk_on(base, false);
 
 	/* check data line and cmd line status */
-	retry = 0xffff;
-	while (!(base->PRES_STATE &
+	if ((base->PRES_STATE &
 		(CARD_DATA1_STATUS_MASK | CARD_DATA2_STATUS_MASK |
-		CARD_DATA3_STATUS_MASK | CARD_DATA0_NOT_BUSY))) {
-		retry--;
-		if (retry <= 0) {
-			return -EBUSY;
+		CARD_DATA3_STATUS_MASK | CARD_DATA0_NOT_BUSY)) == 0) {
+		ret = -EACCES;
+		/* power reset the card (will boot at 3.3V */
+		usdhc_pwr_ctrl(priv, false);
+		usdhc_pwr_ctrl(priv, true);
+		if ((base->PRES_STATE &
+			(CARD_DATA1_STATUS_MASK | CARD_DATA2_STATUS_MASK |
+			CARD_DATA3_STATUS_MASK | CARD_DATA0_NOT_BUSY)) != 0) {
+			LOG_WRN("SD Card supports 1.8V, but board does not, so switch to 3.3V");
+			ret = -EIO;
+			return ret;
 		}
+		LOG_ERR("SD card did not respond after host switched to 1.8V");
 	}
-
-	return 0;
-}
-
-static inline void usdhc_op_ctx_init(struct usdhc_priv *priv,
-	bool cmd_only, uint8_t cmd_idx, uint32_t arg, enum sdhc_rsp_type rsp_type)
-{
-	struct usdhc_cmd *cmd = &priv->op_context.cmd;
-	struct usdhc_data *data = &priv->op_context.data;
-
-	priv->op_context.cmd_only = cmd_only;
-
-	memset((char *)cmd, 0, sizeof(struct usdhc_cmd));
-	memset((char *)data, 0, sizeof(struct usdhc_data));
-
-	cmd->index = cmd_idx;
-	cmd->argument = arg;
-	cmd->rsp_type = rsp_type;
+	return ret;
 }
 
 static int usdhc_select_fun(struct usdhc_priv *priv,
@@ -2111,19 +2137,14 @@ static int usdhc_read_sector(void *bus_data, uint8_t *buf, uint32_t sector,
 
 static bool usdhc_set_sd_active(USDHC_Type *base)
 {
-	uint32_t timeout = 0xffff;
+	return USDHC_SetCardActive(base, 100U);
+}
 
-	base->SYS_CTRL |= USDHC_SYS_CTRL_INITA_MASK;
-	/* Delay some time to wait card become active state. */
-	while ((base->SYS_CTRL & USDHC_SYS_CTRL_INITA_MASK) ==
-		USDHC_SYS_CTRL_INITA_MASK) {
-		if (!timeout) {
-			break;
-		}
-		timeout--;
-	}
-
-	return ((!timeout) ? false : true);
+static inline int usdhc_sd_go_idle(struct usdhc_priv *priv)
+{
+	/* card go idle */
+	usdhc_op_ctx_init(priv, 1, SDHC_GO_IDLE_STATE, 0, SDHC_RSP_TYPE_NONE);
+	return usdhc_xfer(priv);
 }
 
 static void usdhc_get_host_capability(USDHC_Type *base,
@@ -2220,7 +2241,6 @@ static void usdhc_host_hw_init(USDHC_Type *base,
 		USDHC_INT_BLK_GAP_EVENT_FLAG);
 
 	base->INT_STATUS_EN |= int_mask;
-
 }
 
 static void usdhc_cd_gpio_cb(const struct device *dev,
@@ -2252,13 +2272,24 @@ static void usdhc_host_reset(struct usdhc_priv *priv)
 {
 	USDHC_Type *base = priv->config->base;
 
-	usdhc_select_1_8_vol(base, false);
-	usdhc_enable_ddr_mode(base, false, 0);
-	usdhc_tuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP, false);
+	UDSHC_SelectVoltage(base, false);
+	USDHC_EnableDDRMode(base, false, 0U);
+	/* disable tuning */
+#if defined(FSL_FEATURE_USDHC_HAS_SDR50_MODE) && (FSL_FEATURE_USDHC_HAS_SDR50_MODE)
+	USDHC_EnableStandardTuning(base, 0, 0, false);
+	USDHC_EnableAutoTuning(base, false);
+#endif
+
 #if FSL_FEATURE_USDHC_HAS_HS400_MODE
 	/* Disable HS400 mode */
+	USDHC_EnableHS400Mode(base, false);
 	/* Disable DLL */
+	USDHC_EnableStrobeDLL(base, false);
 #endif
+	/* reset data/command/tuning circuit */
+	(void)USDHC_Reset(base, kUSDHC_ResetAll, 100U);
+
+	USDHC_DisableInterruptSignal(base, kUSDHC_AllInterruptFlags);
 }
 
 static int usdhc_app_host_cmd(struct usdhc_priv *priv, int retry,
@@ -2266,28 +2297,183 @@ static int usdhc_app_host_cmd(struct usdhc_priv *priv, int retry,
 	enum sdhc_rsp_type app_rsp_type, bool app_cmd_only)
 {
 	struct usdhc_cmd *cmd = &priv->op_context.cmd;
+	int ret = 0;
+
+	while (retry) {
+		priv->op_context.cmd_only = 1;
+		cmd->index = SDHC_APP_CMD;
+		cmd->argument = arg;
+		cmd->rsp_type = rsp_type;
+		ret = usdhc_xfer(priv);
+		retry--;
+		if (ret && retry > 0) {
+			continue;
+		}
+
+		priv->op_context.cmd_only = app_cmd_only;
+		cmd->index = app_cmd;
+		cmd->argument = app_arg;
+		cmd->rsp_type = app_rsp_type;
+		ret = usdhc_xfer(priv);
+		if (ret && retry > 0) {
+			continue;
+		} else {
+			break;
+		}
+	}
+	return ret;
+}
+
+static int usdhc_send_interface_condition(struct usdhc_priv *priv)
+{
+	int ret, i;
+	struct usdhc_cmd *cmd = &priv->op_context.cmd;
+
+	usdhc_op_ctx_init(priv, true, SDHC_SEND_IF_COND, SDHC_VHS_3V3 | SDHC_CHECK,
+			SDHC_RSP_TYPE_R7);
+	i = NXP_USDHC_MAX_CMD_RETRIES;
+	while (i--) {
+		ret = usdhc_xfer(priv);
+		if (!ret) {
+			return ((cmd->response[0U] & 0xFFU) == SDHC_CHECK) ? 0 : -ENOTSUP;
+		}
+	}
+	LOG_WRN("Send interface condition timeout");
+	return ret;
+}
+
+static inline int usdhc_send_application_cmd(struct usdhc_priv *priv,
+					uint32_t addr)
+{
+	struct usdhc_cmd *cmd = &priv->op_context.cmd;
 	int ret;
 
-APP_CMD_XFER_AGAIN:
-	priv->op_context.cmd_only = 1;
-	cmd->index = SDHC_APP_CMD;
-	cmd->argument = arg;
-	cmd->rsp_type = rsp_type;
+	usdhc_op_ctx_init(priv, true, SDHC_APP_CMD, (addr << 16U),
+			SDHC_RSP_TYPE_R1);
 	ret = usdhc_xfer(priv);
-	retry--;
-	if (ret && retry > 0) {
-		goto APP_CMD_XFER_AGAIN;
+	if (ret || (cmd->response[0U] & SDHC_R1ERR_All_FLAG)) {
+		return ret;
 	}
-
-	priv->op_context.cmd_only = app_cmd_only;
-	cmd->index = app_cmd;
-	cmd->argument = app_arg;
-	cmd->rsp_type = app_rsp_type;
-	ret = usdhc_xfer(priv);
-	if (ret && retry > 0) {
-		goto APP_CMD_XFER_AGAIN;
+	if ((cmd->response[0U] & SDHC_R1APP_CMD) == 0) {
+		return -ENOTSUP;
 	}
+	return 0;
+}
 
+static int usdhc_app_send_operation_cond(struct usdhc_priv *priv, uint32_t arg)
+{
+	struct usdhc_cmd *cmd = &priv->op_context.cmd;
+	int ret, i;
+
+	i = NXP_SDMMC_MAX_VOLTAGE_RETRIES;
+	while (i--) {
+		ret = usdhc_send_application_cmd(priv, 0);
+		if (ret) {
+			continue;
+		}
+		usdhc_op_ctx_init(priv, true, SDHC_APP_SEND_OP_COND, arg,
+				SDHC_RSP_TYPE_R3);
+		ret = usdhc_xfer(priv);
+		if (ret) {
+			LOG_ERR("Send APP CMD 41 Failed with host error %d,"
+				"response %d", ret, cmd->response[0U]);
+			return ret;
+		}
+		/* Wait until card exit busy state. */
+		if (cmd->response[0U] & SD_OCR_PWR_BUSY_FLAG) {
+			/* high capacity check */
+			if (cmd->response[0U] & SD_OCR_CARD_CAP_FLAG) {
+				priv->card_info.card_flags |= SDHC_HIGH_CAPACITY_FLAG;
+				LOG_DBG("SD card reports as SDHC");
+			}
+
+			if (priv->config->no_1_8_v == false) {
+				/* 1.8V support */
+				if (cmd->response[0U] & SD_OCR_SWITCH_18_ACCEPT_FLAG) {
+					priv->card_info.card_flags |= USDHC_VOL_1_8V_FLAG;
+					LOG_DBG("SD card reports 1.8v (LVS) support");
+				}
+			}
+			priv->card_info.raw_ocr = cmd->response[0U];
+			return 0;
+		}
+		usdhc_millsec_delay(10U);
+	}
+	LOG_ERR("Send ACMD41 Timeout");
+	return -ETIMEDOUT;
+}
+
+static int usdhc_probe_bus_voltage(struct usdhc_priv *priv)
+{
+	uint32_t app_cmd_41_arg = 0U;
+	int ret = 0;
+	const struct usdhc_config *config = priv->config;
+
+	/* 3.3V voltage should be supported as default */
+	app_cmd_41_arg |= (SD_OCR_VDD29_30FLAG |
+						SD_OCR_VDD32_33FLAG |
+						SD_OCR_VDD33_34FLAG);
+
+	if ((config->no_1_8_v == false) &&
+			(priv->host_capability.host_flags & USDHC_SUPPORT_V180_FLAG) &&
+			(priv->host_capability.host_flags &
+			(USDHC_SUPPORT_SDR50_FLAG |
+			USDHC_SUPPORT_SDR104_FLAG |
+			USDHC_SUPPORT_DDR50_FLAG))) {
+		/* Allow user to select work voltage.
+		 * If not selected, SDMMC, will handle it automatically
+		 */
+		app_cmd_41_arg |= SD_OCR_SWITCH_18_REQ_FLAG;
+		/* Reset to 3.3V signal voltage */
+		if (usdhc_select_1_8_vol(config->base, false) == 0) {
+			/* Operation voltage changed, power reset card */
+			usdhc_pwr_ctrl(priv, false);
+			usdhc_pwr_ctrl(priv, true);
+		}
+	}
+	priv->card_info.voltage = SD_VOL_3_3_V;
+
+	/* Send card active */
+	(void)usdhc_set_sd_active(config->base);
+	do {
+		/* Card go idle */
+		if (usdhc_sd_go_idle(priv)) {
+			return -EIO;
+		}
+		/* Check card's supported interface condition */
+		ret = usdhc_send_interface_condition(priv);
+		if (ret) {
+			/* SDSC card */
+			ret = usdhc_sd_go_idle(priv);
+			if (ret) {
+				break;
+			}
+		} else {
+			/* SDHC or SDXC card */
+			app_cmd_41_arg |= SD_OCR_HOST_CAP_FLAG;
+			priv->card_info.card_flags |= USDHC_SDHC_FLAG;
+		}
+		ret = usdhc_app_send_operation_cond(priv, app_cmd_41_arg);
+		if (ret) {
+			LOG_ERR("APP condition CMD failed: %d", ret);
+			return ret;
+		}
+		if (priv->card_info.card_flags & USDHC_VOL_1_8V_FLAG) {
+			ret = usdhc_vol_switch(priv);
+			if (ret == -EIO) {
+				LOG_DBG("Restart negotiation at 3.3V");
+				priv->card_info.card_flags &= ~USDHC_VOL_1_8V_FLAG;
+				continue;
+			}
+			if (ret) {
+				LOG_DBG("Voltage negotiation failed");
+			} else {
+				priv->card_info.voltage = SD_VOL_1_8_V;
+			}
+			return ret;
+		}
+		break;
+	} while (true);
 	return ret;
 }
 
@@ -2295,7 +2481,6 @@ static int usdhc_sd_init(struct usdhc_priv *priv)
 {
 	const struct usdhc_config *config = priv->config;
 	USDHC_Type *base = config->base;
-	uint32_t app_cmd_41_arg = 0U;
 	int ret, retry;
 	struct usdhc_cmd *cmd = &priv->op_context.cmd;
 	struct usdhc_data *data = &priv->op_context.data;
@@ -2303,121 +2488,23 @@ static int usdhc_sd_init(struct usdhc_priv *priv)
 	if (!priv->host_ready) {
 		return -ENODEV;
 	}
+	/* Power up the card */
+	usdhc_pwr_ctrl(priv, true);
 
 	/* reset variables */
 	priv->card_info.card_flags = 0U;
 	/* set DATA bus width 1bit at beginning*/
-	usdhc_set_bus_width(base, USDHC_DATA_BUS_WIDTH_1BIT);
-	/*set card freq to 400KHZ at begging*/
+	USDHC_SetDataBusWidth(base, kUSDHC_DataBusWidth1Bit);
+	/*set card freq to 400KHZ at beginning*/
 	priv->card_info.busclk_hz =
 		usdhc_set_sd_clk(base, priv->src_clk_hz,
 			SDMMC_CLOCK_400KHZ);
-	/* send card active */
-	ret = usdhc_set_sd_active(base);
-	if (ret == false) {
-		return -EIO;
-	}
 
-	/* Get host capability. */
-	usdhc_get_host_capability(base, &priv->host_capability);
-
-	/* card go idle */
-	usdhc_op_ctx_init(priv, 1, SDHC_GO_IDLE_STATE, 0, SDHC_RSP_TYPE_NONE);
-
-	ret = usdhc_xfer(priv);
+	/* Probe bus voltage */
+	ret = usdhc_probe_bus_voltage(priv);
 	if (ret) {
 		return ret;
 	}
-
-	if (USDHC_SUPPORT_V330_FLAG != SDMMCHOST_NOT_SUPPORT) {
-		app_cmd_41_arg |= (SD_OCR_VDD32_33FLAG | SD_OCR_VDD33_34FLAG);
-		priv->card_info.voltage = SD_VOL_3_3_V;
-	} else if (USDHC_SUPPORT_V300_FLAG != SDMMCHOST_NOT_SUPPORT) {
-		app_cmd_41_arg |= SD_OCR_VDD29_30FLAG;
-		priv->card_info.voltage = SD_VOL_3_3_V;
-	}
-
-	/* allow user select the work voltage, if not select,
-	 * sdmmc will handle it automatically
-	 */
-	if (priv->config->no_1_8_v == false) {
-		if (USDHC_SUPPORT_V180_FLAG != SDMMCHOST_NOT_SUPPORT) {
-			app_cmd_41_arg |= SD_OCR_SWITCH_18_REQ_FLAG;
-		}
-	}
-
-	/* Check card's supported interface condition. */
-	usdhc_op_ctx_init(priv, 1, SDHC_SEND_IF_COND,
-		SDHC_VHS_3V3 | SDHC_CHECK, SDHC_RSP_TYPE_R7);
-
-	retry = 10;
-	while (retry) {
-		ret = usdhc_xfer(priv);
-		if (!ret) {
-			if ((cmd->response[0U] & 0xFFU) != SDHC_CHECK) {
-				ret = -ENOTSUP;
-			} else {
-				break;
-			}
-		}
-		retry--;
-	}
-
-	if (!ret) {
-		/* SDHC or SDXC card */
-		app_cmd_41_arg |= SD_OCR_HOST_CAP_FLAG;
-		priv->card_info.card_flags |= USDHC_SDHC_FLAG;
-	} else {
-		/* SDSC card */
-		LOG_ERR("USDHC SDSC not implemented yet!");
-		return -ENOTSUP;
-	}
-
-	/* Set card interface condition according to SDHC capability and
-	 * card's supported interface condition.
-	 */
-APP_SEND_OP_COND_AGAIN:
-	usdhc_op_ctx_init(priv, 1, 0, 0, SDHC_RSP_TYPE_NONE);
-	ret = usdhc_app_host_cmd(priv, NXP_SDMMC_MAX_VOLTAGE_RETRIES, 0,
-		SDHC_APP_SEND_OP_COND, app_cmd_41_arg,
-		SDHC_RSP_TYPE_R1, SDHC_RSP_TYPE_R3, 1);
-	if (ret) {
-		LOG_ERR("APP Condition CMD failed:%d", ret);
-		return ret;
-	}
-	if (cmd->response[0U] & SD_OCR_PWR_BUSY_FLAG) {
-		/* high capacity check */
-		if (cmd->response[0U] & SD_OCR_CARD_CAP_FLAG) {
-			priv->card_info.card_flags |= SDHC_HIGH_CAPACITY_FLAG;
-		}
-
-		if (priv->config->no_1_8_v == false) {
-			/* 1.8V support */
-			if (cmd->response[0U] & SD_OCR_SWITCH_18_ACCEPT_FLAG) {
-				priv->card_info.card_flags |= SDHC_1800MV_FLAG;
-			}
-		}
-		priv->card_info.raw_ocr = cmd->response[0U];
-	} else {
-		goto APP_SEND_OP_COND_AGAIN;
-	}
-
-	/* check if card support 1.8V */
-	if ((priv->card_info.card_flags & USDHC_VOL_1_8V_FLAG)) {
-		usdhc_op_ctx_init(priv, 1, SDHC_VOL_SWITCH,
-			0, SDHC_RSP_TYPE_R1);
-
-		ret = usdhc_xfer(priv);
-		if (!ret) {
-			ret = usdhc_vol_switch(priv);
-		}
-		if (ret) {
-			LOG_ERR("Voltage switch failed: %d", ret);
-			return ret;
-		}
-		priv->card_info.voltage = SD_VOL_1_8_V;
-	}
-
 	/* Initialize card if the card is SD card. */
 	usdhc_op_ctx_init(priv, 1, SDHC_ALL_SEND_CID, 0, SDHC_RSP_TYPE_R2);
 
@@ -2537,7 +2624,7 @@ APP_SEND_OP_COND_AGAIN:
 			LOG_ERR("Set bus width failed: %d", ret);
 			return ret;
 		}
-		usdhc_set_bus_width(base, USDHC_DATA_BUS_WIDTH_4BIT);
+		USDHC_SetDataBusWidth(base, USDHC_DATA_BUS_WIDTH_4BIT);
 	}
 
 	if (priv->card_info.version >= SD_SPEC_VER3_0) {
@@ -2639,9 +2726,10 @@ static int usdhc_board_access_init(struct usdhc_priv *priv)
 		base->PROT_CTRL &= ~USDHC_PROT_CTRL_D3CD_MASK;
 		if ((base->PRES_STATE & USDHC_PRES_STATE_CINST_MASK) != 0) {
 			priv->inserted = true;
+			ret = 0;
 		} else {
 			priv->inserted = false;
-			return -ENODEV;
+			ret = -ENODEV;
 		}
 	} else {
 		ret = usdhc_cd_gpio_init(priv->detect_gpio,
@@ -2660,15 +2748,18 @@ static int usdhc_board_access_init(struct usdhc_priv *priv)
 
 		if (gpio_level == 0) {
 			priv->inserted = false;
-			LOG_ERR("NO SD inserted!");
-
-			return -ENODEV;
+			ret = -ENODEV;
+		} else {
+			priv->inserted = true;
+			ret = 0;
 		}
-
-		priv->inserted = true;
-		LOG_INF("SD inserted!");
 	}
-	return 0;
+	if (priv->inserted) {
+		LOG_INF("SD inserted");
+	} else {
+		LOG_ERR("NO SD inserted!");
+	}
+	return ret;
 }
 
 static int usdhc_access_init(const struct device *dev)
@@ -2684,7 +2775,6 @@ static int usdhc_access_init(const struct device *dev)
 
 	if (!config->base) {
 		k_mutex_unlock(&z_usdhc_init_lock);
-
 		return -ENODEV;
 	}
 
@@ -2697,7 +2787,6 @@ static int usdhc_access_init(const struct device *dev)
 	ret = usdhc_board_access_init(priv);
 	if (ret) {
 		k_mutex_unlock(&z_usdhc_init_lock);
-
 		return ret;
 	}
 
@@ -2707,8 +2796,11 @@ static int usdhc_access_init(const struct device *dev)
 	priv->op_context.dma_cfg.adma_table = 0;
 	priv->op_context.dma_cfg.adma_table_words = USDHC_ADMA_TABLE_WORDS;
 	usdhc_host_hw_init(config->base, config);
+	/* Get host capability. */
+	usdhc_get_host_capability(config->base, &priv->host_capability);
 	priv->host_ready = 1;
 
+	/* Reset the host */
 	usdhc_host_reset(priv);
 	ret = usdhc_sd_init(priv);
 	k_mutex_unlock(&z_usdhc_init_lock);
