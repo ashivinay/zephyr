@@ -3,5 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-
-# file is empty and kept as a place holder if/when Kconfig is needed
+config NXP_OSA
+    bool "NXP OSA Layer"
+    help
+	if y, include NXP's OS abstraction layer in the build
