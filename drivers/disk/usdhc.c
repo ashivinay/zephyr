@@ -1483,6 +1483,21 @@ static inline void usdhc_force_clk_on(USDHC_Type *base, bool on)
 	USDHC_ForceClockOn(base, on);
 }
 
+static bool usdhc_hw_reset(USDHC_Type *base, uint32_t mask, uint32_t timeout)
+{
+	base->SYS_CTRL |= (mask & (USDHC_SYS_CTRL_RSTA_MASK |
+		USDHC_SYS_CTRL_RSTC_MASK | USDHC_SYS_CTRL_RSTD_MASK));
+	/* Delay some time to wait reset success. */
+	while ((base->SYS_CTRL & mask)) {
+		if (!timeout) {
+			break;
+		}
+		timeout--;
+	}
+
+	return ((!timeout) ? false : true);
+}
+
 static void usdhc_tuning(USDHC_Type *base, uint32_t start, uint32_t step, bool enable)
 {
 	uint32_t tuning_ctrl = 0U;
@@ -1513,15 +1528,20 @@ static void usdhc_tuning(USDHC_Type *base, uint32_t start, uint32_t step, bool e
 	}
 }
 
-int usdhc_adjust_tuning_timing(USDHC_Type *base, uint32_t delay)
+int usdhc_adjust_tuning_timing(USDHC_Type *base, uint32_t pre_delay,
+							uint32_t out_delay, uint32_t post_delay)
 {
 	uint32_t clk_tune_ctrl = 0U;
 
 	clk_tune_ctrl = base->CLK_TUNE_CTRL_STATUS;
 
-	clk_tune_ctrl &= ~USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_PRE_MASK;
+	clk_tune_ctrl &= ~(USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_PRE_MASK |
+			USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_OUT_MASK |
+			USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_POST_MASK);
 
-	clk_tune_ctrl |= USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_PRE(delay);
+	clk_tune_ctrl |=  USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_PRE(pre_delay) |
+					USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_OUT(out_delay) |
+					USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_POST(post_delay);
 
 	/* load the delay setting */
 	base->CLK_TUNE_CTRL_STATUS = clk_tune_ctrl;
@@ -1556,13 +1576,32 @@ static inline void usdhc_op_ctx_init(struct usdhc_priv *priv,
 	cmd->rsp_type = rsp_type;
 }
 
+static inline void usdhc_enable_auto_tuning(USDHC_Type *base, bool enable)
+{
+	if (enable) {
+		base->MIX_CTRL |= USDHC_MIX_CTRL_AUTO_TUNE_EN_MASK;
+	} else {
+		base->MIX_CTRL &= ~USDHC_MIX_CTRL_AUTO_TUNE_EN_MASK;
+	}
+}
+
 static int usdhc_execute_tuning(struct usdhc_priv *priv)
 {
 	bool tuning_err = true;
 	int ret;
 	USDHC_Type *base = priv->config->base;
 
-	/* enable the standard tuning */
+	usdhc_hw_reset(base, USDHC_RESET_TUNING, 100U);
+	/* disable the standard tuning */
+	usdhc_tuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP, false);
+
+	/*
+	 * Tuning fail found on some SOCS caused by the difference of delay cell, so
+	 * we need to increase the tuning counter to cover the adjustable tuninig window
+	 */
+	base->TUNING_CTRL = ((base->TUNING_CTRL & (~USDHC_TUNING_CTRL_TUNING_COUNTER_MASK)) |
+		USDHC_TUNING_CTRL_TUNING_COUNTER(60U));
+	/* Enable the standard tuning */
 	usdhc_tuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP, true);
 
 	while (true) {
@@ -1589,14 +1628,11 @@ static int usdhc_execute_tuning(struct usdhc_priv *priv)
 			usdhc_tuning(base, SDHC_STANDARD_TUNING_START,
 				SDHC_TUINIG_STEP, true);
 			usdhc_adjust_tuning_timing(base,
-				SDHC_STANDARD_TUNING_START);
+				SDHC_STANDARD_TUNING_START, 0, 0);
 		} else {
 			break;
 		}
 	}
-
-	/* delay to wait the host controller stable */
-	usdhc_millsec_delay(1000);
 
 	/* check tuning result*/
 	if (!(base->AUTOCMD12_ERR_STATUS &
@@ -1604,8 +1640,7 @@ static int usdhc_execute_tuning(struct usdhc_priv *priv)
 		return -EIO;
 	}
 
-	usdhc_set_retuning_timer(base, SDHC_RETUNING_TIMER_COUNT);
-
+	usdhc_enable_auto_tuning(base, true);
 	return 0;
 }
 
@@ -1995,8 +2030,8 @@ static int usdhc_select_bus_timing(struct usdhc_priv *priv)
 						priv->src_clk_hz,
 						SD_CLOCK_50MHZ);
 				usdhc_enable_ddr_mode(config->base, true, 0U);
+				break;
 			}
-			break;
 		case SD_TIMING_SDR50_MODE:
 			error = usdhc_select_fun(priv,
 				SD_GRP_TIMING_MODE,
@@ -2009,8 +2044,8 @@ static int usdhc_select_bus_timing(struct usdhc_priv *priv)
 						config->base,
 						priv->src_clk_hz,
 						SD_CLOCK_100MHZ);
+				break;
 			}
-			break;
 		case SD_TIMING_SDR25_HIGH_SPEED_MODE:
 			error = usdhc_select_fun(priv, SD_GRP_TIMING_MODE,
 				SD_TIMING_SDR25_HIGH_SPEED_MODE);
@@ -2022,12 +2057,15 @@ static int usdhc_select_bus_timing(struct usdhc_priv *priv)
 						config->base,
 						priv->src_clk_hz,
 						SD_CLOCK_50MHZ);
+				break;
 			}
-			break;
 
 		default:
 			break;
 		}
+	}
+	if (error) {
+		return error;
 	}
 
 	/* SDR50 and SDR104 mode need tuning */
@@ -2173,21 +2211,6 @@ static void usdhc_get_host_capability(USDHC_Type *base,
 	/* USDHC support 4/8 bit data bus width. */
 	capability->host_flags |= (USDHC_SUPPORT_4BIT_FLAG |
 		USDHC_SUPPORT_8BIT_FLAG);
-}
-
-static bool usdhc_hw_reset(USDHC_Type *base, uint32_t mask, uint32_t timeout)
-{
-	base->SYS_CTRL |= (mask & (USDHC_SYS_CTRL_RSTA_MASK |
-		USDHC_SYS_CTRL_RSTC_MASK | USDHC_SYS_CTRL_RSTD_MASK));
-	/* Delay some time to wait reset success. */
-	while ((base->SYS_CTRL & mask)) {
-		if (!timeout) {
-			break;
-		}
-		timeout--;
-	}
-
-	return ((!timeout) ? false : true);
 }
 
 static void usdhc_host_hw_init(USDHC_Type *base,
