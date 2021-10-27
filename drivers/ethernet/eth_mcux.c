@@ -126,6 +126,7 @@ struct eth_context {
 #endif
 	enet_handle_t enet_handle;
 #if defined(CONFIG_PTP_CLOCK_MCUX)
+	struct net_pkt *ts_tx_pkt;
 	const struct device *ptp_clock;
 	enet_ptp_config_t ptp_config;
 	float clk_ratio;
@@ -171,11 +172,6 @@ struct eth_context {
 	 */
 	uint8_t * frame_buf; /* Max MTU + ethernet header */
 };
-
-#if defined(CONFIG_PTP_CLOCK_MCUX)
-/* Packets to be timestamped. */
-static struct net_pkt *ts_tx_pkt;
-#endif
 
 /* Use ENET_FRAME_MAX_VLANFRAMELEN for VLAN frame size
  * Use ENET_FRAME_MAX_FRAMELEN for Ethernet frame size
@@ -716,9 +712,9 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 					  context->frame_buf, total_len, RING_ID, true, NULL);
 
 		if (!status) {
-			ts_tx_pkt = net_pkt_ref(pkt);
+			context->ts_tx_pkt = net_pkt_ref(pkt);
 		} else {
-			ts_tx_pkt = NULL;
+			context->ts_tx_pkt = NULL;
 		}
 
 	} else
@@ -861,7 +857,7 @@ static inline void ts_register_tx_event(struct eth_context *context,
 {
 	struct net_pkt *pkt;
 
-	pkt = ts_tx_pkt;
+	pkt = context->ts_tx_pkt;
 	if (pkt && atomic_get(&pkt->atomic_ref) > 0) {
 		if (eth_get_ptp_data(net_pkt_iface(pkt), pkt)) {
 			if (frameinfo->isTsAvail) {
@@ -883,7 +879,7 @@ static inline void ts_register_tx_event(struct eth_context *context,
 		}
 	}
 
-	ts_tx_pkt = NULL;
+	context->ts_tx_pkt = NULL;
 }
 #endif /* CONFIG_PTP_CLOCK_MCUX && CONFIG_NET_L2_PTP */
 
