@@ -133,6 +133,10 @@ Connections and I/Os
 
 The MIMXRT1060 SoC has five pairs of pinmux/gpio controllers.
 
+Note that two versions exist of this EVK, MIMXRT1060-EVK and MIMXRT1060-EVKB.
+The EVKB edition of the board features additional audio connectors, and places
+the user LED on GPIO port 1, pin 8 instead of pin 9.
+
 +---------------+-----------------+---------------------------+
 | Name          | Function        | Usage                     |
 +===============+=================+===========================+
@@ -146,7 +150,9 @@ The MIMXRT1060 SoC has five pairs of pinmux/gpio controllers.
 +---------------+-----------------+---------------------------+
 | GPIO_AD_B0_05 | GPIO            | SD Card                   |
 +---------------+-----------------+---------------------------+
-| GPIO_AD_B0_09 | GPIO/ENET_RST   | LED                       |
+| GPIO_AD_B0_09 | GPIO/ENET_RST   | LED (EVK-A)               |
++---------------+-----------------+---------------------------+
+| GPIO_AD_B0_08 | GPIO            | LED (EVK-B)               |
 +---------------+-----------------+---------------------------+
 | GPIO_AD_B0_10 | GPIO/ENET_INT   | GPIO/Ethernet             |
 +---------------+-----------------+---------------------------+

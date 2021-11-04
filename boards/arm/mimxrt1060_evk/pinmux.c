@@ -101,7 +101,15 @@ static int mimxrt1060_evk_init(const struct device *dev)
 			    IOMUXC_SW_PAD_CTL_PAD_DSE(6));
 #endif
 
-#if !CONFIG_NET_L2_ETHERNET
+#if (CONFIG_BOARD_MIMXRT1060_EVKB_HYPERFLASH || CONFIG_BOARD_MIMXRT1060_EVKB)
+	/* EVKB boards use GPIO_AD_08 as user LED */
+	IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_08_GPIO1_IO08, 0);
+
+	IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_08_GPIO1_IO08,
+			    IOMUXC_SW_PAD_CTL_PAD_PKE_MASK |
+			    IOMUXC_SW_PAD_CTL_PAD_SPEED(2) |
+			    IOMUXC_SW_PAD_CTL_PAD_DSE(6));
+#elif !CONFIG_NET_L2_ETHERNET
 	/* Shared GPIO between USER_LED and ENET_RST */
 	IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_09_GPIO1_IO09, 0);
 
@@ -109,10 +117,9 @@ static int mimxrt1060_evk_init(const struct device *dev)
 			    IOMUXC_SW_PAD_CTL_PAD_PKE_MASK |
 			    IOMUXC_SW_PAD_CTL_PAD_SPEED(2) |
 			    IOMUXC_SW_PAD_CTL_PAD_DSE(6));
-
+#endif
 	/* SW0 */
 	IOMUXC_SetPinMux(IOMUXC_SNVS_WAKEUP_GPIO5_IO00, 0);
-#endif
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(lpuart1), okay) && CONFIG_SERIAL
 	/* LPUART1 TX/RX */

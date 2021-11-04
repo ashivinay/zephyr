@@ -1,0 +1,12 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright (c) 2021, NXP
+ */
+
+#include "mimxrt1060_evk.dts"
+
+/* EVKB uses GPIO port 1 pin 8 as user LED */
+&green_led {
+	gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+};
