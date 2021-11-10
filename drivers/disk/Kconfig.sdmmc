@@ -37,6 +37,7 @@ config SDMMC_USDHC
 	bool "NXP i.MXRT USDHC driver"
 	depends on (HAS_MCUX_USDHC1 || HAS_MCUX_USDHC2)
 	default $(dt_compat_enabled,$(DT_COMPAT_NXP_USDHC))
+	imply NOCACHE_MEMORY
 	help
 	  File system on a SDHC card accessed over
 	  NXP USDHC.

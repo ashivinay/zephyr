@@ -674,6 +674,7 @@ enum usdhc_capability_flag {
 /*!< standard tuning step */
 #define SDHC_RETUNING_TIMER_COUNT (0U)
 /*!< Re-tuning timer */
+#define SDHC_STANDARD_TUNING_COUNTER (60)
 
 #define USDHC_MAX_DVS	\
 	((USDHC_SYS_CTRL_DVS_MASK >>	\
@@ -841,63 +842,6 @@ static inline void usdhc_force_clk_on(USDHC_Type *base, bool on)
 		base->VEND_SPEC &= ~USDHC_VEND_SPEC_FRC_SDCLK_ON_MASK;
 }
 
-static void usdhc_tuning(USDHC_Type *base, uint32_t start, uint32_t step, bool enable)
-{
-	uint32_t tuning_ctrl = 0U;
-
-	if (enable) {
-		/* feedback clock */
-		base->MIX_CTRL |= USDHC_MIX_CTRL_FBCLK_SEL_MASK;
-		/* config tuning start and step */
-		tuning_ctrl = base->TUNING_CTRL;
-		tuning_ctrl &= ~(USDHC_TUNING_CTRL_TUNING_START_TAP_MASK |
-			USDHC_TUNING_CTRL_TUNING_STEP_MASK);
-		tuning_ctrl |= (USDHC_TUNING_CTRL_TUNING_START_TAP(start) |
-			USDHC_TUNING_CTRL_TUNING_STEP(step) |
-			USDHC_TUNING_CTRL_STD_TUNING_EN_MASK);
-		base->TUNING_CTRL = tuning_ctrl;
-
-		/* excute tuning */
-		base->AUTOCMD12_ERR_STATUS |=
-			(USDHC_AUTOCMD12_ERR_STATUS_EXECUTE_TUNING_MASK |
-			USDHC_AUTOCMD12_ERR_STATUS_SMP_CLK_SEL_MASK);
-	} else {
-		/* disable the standard tuning */
-		base->TUNING_CTRL &= ~USDHC_TUNING_CTRL_STD_TUNING_EN_MASK;
-		/* clear excute tuning */
-		base->AUTOCMD12_ERR_STATUS &=
-			~(USDHC_AUTOCMD12_ERR_STATUS_EXECUTE_TUNING_MASK |
-			USDHC_AUTOCMD12_ERR_STATUS_SMP_CLK_SEL_MASK);
-	}
-}
-
-int usdhc_adjust_tuning_timing(USDHC_Type *base, uint32_t delay)
-{
-	uint32_t clk_tune_ctrl = 0U;
-
-	clk_tune_ctrl = base->CLK_TUNE_CTRL_STATUS;
-
-	clk_tune_ctrl &= ~USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_PRE_MASK;
-
-	clk_tune_ctrl |= USDHC_CLK_TUNE_CTRL_STATUS_DLY_CELL_SET_PRE(delay);
-
-	/* load the delay setting */
-	base->CLK_TUNE_CTRL_STATUS = clk_tune_ctrl;
-	/* check delat setting error */
-	if (base->CLK_TUNE_CTRL_STATUS &
-		(USDHC_CLK_TUNE_CTRL_STATUS_PRE_ERR_MASK |
-		USDHC_CLK_TUNE_CTRL_STATUS_NXT_ERR_MASK))
-		return -EIO;
-
-	return 0;
-}
-
-static inline void usdhc_set_retuning_timer(USDHC_Type *base, uint32_t counter)
-{
-	base->HOST_CTRL_CAP &= ~USDHC_HOST_CTRL_CAP_TIME_COUNT_RETUNING_MASK;
-	base->HOST_CTRL_CAP |= USDHC_HOST_CTRL_CAP_TIME_COUNT_RETUNING(counter);
-}
-
 static inline void usdhc_set_bus_width(USDHC_Type *base,
 	enum usdhc_data_bus_width width)
 {
@@ -911,8 +855,21 @@ static int usdhc_execute_tuning(struct usdhc_priv *priv)
 	int ret;
 	USDHC_Type *base = priv->config->base;
 
-	/* enable the standard tuning */
-	usdhc_tuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP, true);
+	/* Reset controller tuning */
+	USDHC_Reset(base, kUSDHC_ResetTuning, 100U);
+
+	/* disable the standard tuning */
+	USDHC_EnableStandardTuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP,
+							false);
+
+	/*
+	 * Tuning fail found on some SOCS caused by the difference of delay cell, so we need to
+	 * increase the tuning counter to cover the adjustable tuninig window
+	 */
+	USDHC_SetStandardTuningCounter(base, SDHC_STANDARD_TUNING_COUNTER);
+	/* Enable Standard tuning */
+	USDHC_EnableStandardTuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP,
+							true);
 
 	while (true) {
 		/* send tuning block */
@@ -922,23 +879,18 @@ static int usdhc_execute_tuning(struct usdhc_priv *priv)
 		}
 		usdhc_millsec_delay(10);
 
-		/*wait excute tuning bit clear*/
-		if ((base->AUTOCMD12_ERR_STATUS &
-			USDHC_AUTOCMD12_ERR_STATUS_EXECUTE_TUNING_MASK)) {
+		/*wait execute tuning bit clear*/
+		if (USDHC_GetExecuteStdTuningStatus(base)) {
 			continue;
 		}
 
 		/* if tuning error , re-tuning again */
-		if ((base->CLK_TUNE_CTRL_STATUS &
-			(USDHC_CLK_TUNE_CTRL_STATUS_NXT_ERR_MASK |
-			USDHC_CLK_TUNE_CTRL_STATUS_PRE_ERR_MASK)) &&
-			tuning_err) {
+		if ((USDHC_CheckTuningError(base)) && tuning_err) {
 			tuning_err = false;
 			/* enable the standard tuning */
-			usdhc_tuning(base, SDHC_STANDARD_TUNING_START,
-				SDHC_TUINIG_STEP, true);
-			usdhc_adjust_tuning_timing(base,
-				SDHC_STANDARD_TUNING_START);
+			USDHC_EnableStandardTuning(base, SDHC_STANDARD_TUNING_START,
+							SDHC_TUINIG_STEP, true);
+			USDHC_SetTuningDelay(base, SDHC_STANDARD_TUNING_START, 0U, 0U);
 		} else {
 			break;
 		}
@@ -948,12 +900,11 @@ static int usdhc_execute_tuning(struct usdhc_priv *priv)
 	usdhc_millsec_delay(1000);
 
 	/* check tuning result*/
-	if (!(base->AUTOCMD12_ERR_STATUS &
-		USDHC_AUTOCMD12_ERR_STATUS_SMP_CLK_SEL_MASK)) {
+	if (USDHC_CheckStdTuningResult(base) == 0U) {
 		return -EIO;
 	}
 
-	usdhc_set_retuning_timer(base, SDHC_RETUNING_TIMER_COUNT);
+	USDHC_EnableAutoTuning(base, true);
 
 	return 0;
 }
@@ -1597,10 +1548,9 @@ static void usdhc_host_reset(struct usdhc_priv *priv)
 
 	usdhc_select_1_8_vol(base, false);
 	usdhc_enable_ddr_mode(base, false, 0);
-	usdhc_tuning(base, SDHC_STANDARD_TUNING_START, SDHC_TUINIG_STEP, false);
-#if FSL_FEATURE_USDHC_HAS_HS400_MODE
-	/* Disable HS400 mode */
-	/* Disable DLL */
+#if defined(FSL_FEATURE_USDHC_HAS_SDR50_MODE) && (FSL_FEATURE_USDHC_HAS_SDR50_MODE)
+	USDHC_EnableStandardTuning(base, 0, 0, false);
+	USDHC_EnableAutoTuning(base, false);
 #endif
 }
 
