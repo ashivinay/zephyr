@@ -75,6 +75,52 @@ static uint32_t last_load;
  */
 static volatile bool gpt_isr_active;
 
+#define TRACE_GPT_TIMER
+
+/*
+ * The gpt_trace_events buffer can be dumped in GDB when
+ * 'TRACE_GPT_TIMER' is defined. This can be useful for tracing subtle errors
+ * in the GPT timer driver.
+ */
+
+#ifdef TRACE_GPT_TIMER
+enum gpt_event {
+	GPT_INTERRUPT,
+	GPT_SET_TIMEOUT,
+	GPT_ELAPSED,
+	GPT_CYCLE_GET,
+	GPT_CYCLE_ELAPSED,
+	GPT_EXTERNAL,
+};
+
+struct gpt_trace_entry {
+	enum gpt_event event;
+	/* All global variable values */
+	uint32_t last_load;
+	uint32_t cycle_count;
+	uint32_t announced_cycles;
+	uint32_t wrapped_cycles;
+	uint32_t RETVAL; /* function specific */
+};
+
+static volatile uint16_t gpt_trace_idx = UINT16_MAX;
+static volatile struct gpt_trace_entry gpt_trace_events[UINT16_MAX + 1];
+
+static void gpt_trace(enum gpt_event event, uint32_t retval)
+{
+	gpt_trace_idx++;
+	volatile struct gpt_trace_entry *trace = &gpt_trace_events[gpt_trace_idx];
+
+	trace->event = event;
+	trace->last_load = last_load;
+	trace->cycle_count = cycle_count;
+	trace->announced_cycles = announced_cycles;
+	trace->wrapped_cycles = wrapped_cycles;
+	trace->RETVAL = retval;
+}
+
+#endif
+
 /* GPT timer base address */
 static GPT_Type *base;
 
@@ -125,6 +171,10 @@ static uint32_t elapsed(void)
 		GPT_ClearStatusFlags(base, kGPT_OutputCompare1Flag);
 	}
 
+#ifdef TRACE_GPT_TIMER
+	gpt_trace(GPT_CYCLE_ELAPSED, (read2 + wrapped_cycles));
+#endif
+
 	/* Calculate the cycles since the ISR last fired (the ISR updates 'cycle_count') */
 	return read2 + wrapped_cycles;
 }
@@ -162,6 +212,9 @@ ISR_DIRECT_DECLARE(mcux_imx_gpt_isr)
 	 * don't have to worry about that.
 	 */
 	gpt_isr_active = true;
+#ifdef TRACE_GPT_TIMER
+	gpt_trace(GPT_INTERRUPT, tick_delta);
+#endif
 	sys_clock_announce(tick_delta);
 #else
 	/* If system is tickful, interrupt will fire again at next tick */
@@ -169,6 +222,14 @@ ISR_DIRECT_DECLARE(mcux_imx_gpt_isr)
 #endif
 	ISR_DIRECT_FOOTER(1);
 	return 1;
+}
+
+/* Use this to trace point outside of the GPT timer code. */
+void gpt_external_trace(uint32_t MAGIC)
+{
+#ifdef TRACE_GPT_TIMER
+	gpt_trace(GPT_EXTERNAL, MAGIC);
+#endif
 }
 
 /* Next needed call to sys_clock_announce will not be until the specified number
@@ -224,6 +285,9 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 		reload_value = CLAMP(reload_value, MIN_DELAY, MAX_CYCLES);
 	}
 	/* Set reload value (will also reset GPT timer) */
+#ifdef TRACE_GPT_TIMER
+	gpt_trace(GPT_SET_TIMEOUT, reload_value);
+#endif
 	read2 = GPT_GetCurrentTimerCount(base);
 	/* The below checks correspond to the following:
 	 * GPT timer is at zero ticks
@@ -281,6 +345,9 @@ uint32_t sys_clock_elapsed(void)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 
 	cyc = elapsed() + cycle_count - announced_cycles;
+#ifdef TRACE_GPT_TIMER
+	gpt_trace(GPT_ELAPSED, cyc / CYC_PER_TICK);
+#endif
 	k_spin_unlock(&lock, key);
 	return cyc / CYC_PER_TICK;
 #else
@@ -296,6 +363,9 @@ uint32_t sys_clock_cycle_get_32(void)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 
 	ret = elapsed() + cycle_count;
+#ifdef TRACE_GPT_TIMER
+	gpt_trace(GPT_CYCLE_GET, ret);
+#endif
 	k_spin_unlock(&lock, key);
 	return ret;
 }
