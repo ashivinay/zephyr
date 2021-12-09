@@ -121,6 +121,22 @@ static ALWAYS_INLINE void clock_init(void)
 	 */
 	CLOCK_SetXtalFreq(24000000U);
 	CLOCK_SetRtcXtalFreq(32768U);
+	/* Init RTC OSC clock frequency. */
+	CLOCK_SetRtcXtalFreq(32768U);
+	/* Enable 1MHz clock output. */
+	XTALOSC24M->OSC_CONFIG2 |= XTALOSC24M_OSC_CONFIG2_ENABLE_1M_MASK;
+	/* Use free 1MHz clock output. */
+	XTALOSC24M->OSC_CONFIG2 &= ~XTALOSC24M_OSC_CONFIG2_MUX_1M_MASK;
+	/* Set XTAL 24MHz clock frequency. */
+	CLOCK_SetXtalFreq(24000000U);
+	/* Enable XTAL 24MHz clock source. */
+	CLOCK_InitExternalClk(0);
+	/* Enable internal RC. */
+	CLOCK_InitRcOsc24M();
+	/* Switch clock source to external OSC. */
+	CLOCK_SwitchOsc(kCLOCK_XtalOsc);
+	/* Set Oscillator ready counter value. */
+	CCM->CCR = (CCM->CCR & (~CCM_CCR_OSCNT_MASK)) | CCM_CCR_OSCNT(127);
 
 	/* Set PERIPH_CLK2 MUX to OSC */
 	CLOCK_SetMux(kCLOCK_PeriphClk2Mux, 0x1);
@@ -128,9 +144,9 @@ static ALWAYS_INLINE void clock_init(void)
 	/* Set PERIPH_CLK MUX to PERIPH_CLK2 */
 	CLOCK_SetMux(kCLOCK_PeriphMux, 0x1);
 
-	/* Setting the VDD_SOC to 1.5V. It is necessary to config AHB to 600Mhz
+	/* Setting the VDD_SOC to 1.275V. It is necessary to config AHB to 600Mhz
 	 */
-	DCDC->REG3 = (DCDC->REG3 & (~DCDC_REG3_TRG_MASK)) | DCDC_REG3_TRG(0x12);
+	DCDC->REG3 = (DCDC->REG3 & (~DCDC_REG3_TRG_MASK)) | DCDC_REG3_TRG(0x13);
 	/* Waiting for DCDC_STS_DC_OK bit is asserted */
 	while (DCDC_REG0_STS_DC_OK_MASK !=
 			(DCDC_REG0_STS_DC_OK_MASK & DCDC->REG0)) {

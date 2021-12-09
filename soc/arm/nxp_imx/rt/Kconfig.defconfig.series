@@ -95,6 +95,10 @@ config WDT_MCUX_IMX_WDOG
 	default y
 	depends on WATCHDOG
 
+config PM
+	default y
+	depends on SOC_SERIES_IMX_RT10XX
+
 if CODE_SEMC
 
 config FLASH_SIZE
