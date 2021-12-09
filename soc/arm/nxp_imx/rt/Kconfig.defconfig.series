@@ -100,6 +100,9 @@ config PM_MCUX_GPC
 
 if SOC_SERIES_IMX_RT10XX && PM
 
+config CODE_DATA_RELOCATION
+	default y
+
 config PM_MCUX_GPC
 	default y if HAS_MCUX_GPC
 

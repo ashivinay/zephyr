@@ -25,6 +25,16 @@ if(CONFIG_PM)
 zephyr_sources_ifdef(CONFIG_SOC_SERIES_IMX_RT11XX power_rt11xx.c)
 endif()
 
+if (CONFIG_PM AND CONFIG_SOC_SERIES_IMX_RT10XX)
+zephyr_sources(power_rt10xx.c)
+zephyr_code_relocate(power_rt10xx.c ITCM_TEXT)
+endif()
+
+zephyr_compile_definitions(
+  XIP_EXTERNAL_FLASH
+  SKIP_SYSCLK_INIT
+)
+
 zephyr_linker_section_configure(
   SECTION .rom_start
   INPUT ".boot_hdr.ivt"
