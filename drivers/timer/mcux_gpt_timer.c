@@ -323,6 +323,9 @@ int sys_clock_driver_init(const struct device *dev)
 	gpt_config.enableRunInDoze = true;
 	/* Use 32KHz clock frequency */
 	gpt_config.clockSource = kGPT_ClockSource_LowFreq;
+	gpt_config.enableRunInDoze = true;
+	gpt_config.enableRunInWait = true;
+	gpt_config.enableRunInStop = true;
 	gpt_config.enableFreeRun = false; /* Set GPT to reset mode */
 
 	/* Initialize the GPT timer in reset mode, and enable the relevant interrupts */
