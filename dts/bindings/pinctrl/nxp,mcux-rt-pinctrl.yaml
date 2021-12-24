@@ -3,7 +3,6 @@
 
 description: |
   The node has the 'pinctrl' node label set in MCUX RT SoC's devicetree
-   
 
 compatible: "nxp,mcux-rt-pinctrl"
 
