@@ -1,0 +1,51 @@
+/*
+ * Copyright (c) 2021, NXP
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <dt-bindings/pinctrl/mcux_rt-pinctrl.h>
+#include <nxp/pinctrl/rt1062.dtsi>
+
+&IOMUXC_GPIO_AD_B1_09_SAI1_MCLK {
+	nxp,mcux_input;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_speed = <2>;
+	nxp,mcux_pke;
+};
+
+&IOMUXC_GPIO_AD_B1_12_SAI1_RX_DATA00 {
+	nxp,mcux_input;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_speed = <2>;
+	nxp,mcux_pke;
+};
+&IOMUXC_GPIO_AD_B1_13_SAI1_TX_DATA00 {
+	nxp,mcux_input;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_speed = <2>;
+	nxp,mcux_pke;
+};
+&IOMUXC_GPIO_AD_B1_14_SAI1_TX_BCLK {
+	nxp,mcux_input;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_speed = <2>;
+	nxp,mcux_pke;
+};
+&IOMUXC_GPIO_AD_B1_15_SAI1_TX_SYNC {
+	nxp,mcux_input;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_speed = <2>;
+	nxp,mcux_pke;
+};
+
+&IOMUXC_GPIO_AD_B0_12_LPUART1_TX {
+	nxp,mcux_speed = <2>;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_pke;
+};
+
+&IOMUXC_GPIO_AD_B0_13_LPUART1_RX {
+	nxp,mcux_speed = <2>;
+	nxp,mcux_dse = <6>;
+	nxp,mcux_pke;
+};
