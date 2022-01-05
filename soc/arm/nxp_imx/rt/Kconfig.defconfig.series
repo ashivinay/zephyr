@@ -44,6 +44,10 @@ config LOG_BACKEND_SWO_FREQ_HZ
 	default 7500000
 	depends on LOG_BACKEND_SWO
 
+config IPM_IMX_REV2
+	default y if OPENAMP
+	depends on IPM
+
 if FLASH_MCUX_FLEXSPI_XIP
 
 # Avoid RWW hazards by defaulting logging to disabled

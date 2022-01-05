@@ -150,6 +150,14 @@
 			dmas = <&edma0 23 30>, <&edma0 24 31>;
 			dma-names = "tx", "rx";
 		};
+
+		mailboxA: mailbox@40c48000 {
+			compatible = "nxp,imx-mu";
+			reg = <0x40c48000 0x4000>;
+			interrupts = <118 0>;
+			label = "MU_A";
+			rdc = <0>;
+		};
 	};
 };
 
