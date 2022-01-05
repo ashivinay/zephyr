@@ -206,6 +206,34 @@ The MIMXRT1170 SoC has six pairs of pinmux/gpio controllers.
 | GPIO_AD_20_SAI1_RX_DATA00 | SAI1_RX_DATA00 | SAI              |
 +---------------------------+----------------+------------------+
 
+Dual Core samples
+*****************
+
++-----------+------------------+----------------------------+
+| Core      | Boot Address     | Comment                    |
++===========+==================+============================+
+| Cortex M7 | 0x30000000[630K] | primary core               |
++-----------+------------------+----------------------------+
+| Cortex M4 | 0x20020000[96k]  | boots from OCRAM           |
++-----------+------------------+----------------------------+
+
++----------+------------------+-----------------------+
+| Memory   | Address[Size]    | Comment               |
++==========+==================+=======================+
+| flexspi1 | 0x30000000[16M]  | Cortex M7 flash       |
++----------+------------------+-----------------------+
+| sdram0   | 0x80030000[64M]  | Cortex M7 ram         |
++----------+------------------+-----------------------+
+| ocram    | 0x20020000[512K] | Cortex M4 "flash"     |
++----------+------------------+-----------------------+
+| sram1    | 0x20000000[128K] | Cortex M4 ram         |
++----------+------------------+-----------------------+
+| ocram2   | 0x200C0000[512K] | Mailbox/shared memory |
++----------+------------------+-----------------------+
+
+Only the first 16K of ocram2 has the correct MPU region attributes set to be
+used as shared memory
+
 System Clock
 ============
 
@@ -223,6 +251,26 @@ Programming and Debugging
 
 Build and flash applications as usual (see :ref:`build_an_application` and
 :ref:`application_run` for more details).
+
+Building a Dual-Core Image
+==========================
+Dual core samples load the M4 core image from flash into the shared ``ocram2``
+region. The M7 core then sets the M4 boot address to this region. The only
+sample currently enabled for dual core builds is the ``openamp`` sample, and
+the routing for booting the M4 core from the M7 is dependent upon
+``CONFIG_OPENAMP`` being selected. To flash a dual core sample, the M4 image
+must be flashed first, so that it is written to flash. Then, the M7 image must
+be flashed. For example, here is how to load the ``openamp`` sample onto a target:
+
+.. code-block:: console
+
+   west debug -d build/openamp_remote-prefix/src/openamp_remote-build/ # Loads M4 image
+   west debug -d build # Loads M7 image, sample is ready to run without debugger
+
+The secondary core can be debugged normally in single core builds
+(where the target is ``mimxrt1170_evk_cm4``). For dual core builds, the
+secondary core should be placed into a loop, then a debugger can be attached
+(see `AN13264`_, section 4.2.3 for more information)
 
 Configuring a Debug Probe
 =========================
@@ -314,3 +362,6 @@ should see the following message in the terminal:
 
 .. _i.MX RT1170 Reference Manual:
    https://www.nxp.com/webapp/Download?colCode=IMXRT1170RM
+
+.. _AN13264:
+   https://www.nxp.com/docs/en/application-note/AN13264.pdf
