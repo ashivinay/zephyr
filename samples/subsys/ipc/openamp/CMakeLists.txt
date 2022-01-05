@@ -16,6 +16,8 @@ elseif("${BOARD}" STREQUAL "mps2_an521")
   set(BOARD_REMOTE "mps2_an521_remote")
 elseif("${BOARD}" STREQUAL "v2m_musca_b1")
   set(BOARD_REMOTE "v2m_musca_b1_ns")
+elseif("${BOARD}" STREQUAL "mimxrt1170_evk_cm7")
+  set(BOARD_REMOTE "mimxrt1170_evk_cm4")
 else()
   message(FATAL_ERROR "${BOARD} was not supported for this sample")
 endif()
@@ -41,5 +43,16 @@ ExternalProject_Add(
   # NB: Do we need to pass on more CMake variables?
   BUILD_ALWAYS True
 )
+
+# Now that targets are created, handle RT1170 image dependency
+if("${BOARD}" STREQUAL "mimxrt1170_evk_cm7")
+  # CM4 image must be built before CM7 image, so create a dependency here
+  add_library(openamp_remote_target INTERFACE)
+  target_include_directories(openamp_remote_target
+    INTERFACE ${REMOTE_ZEPHYR_DIR}/include/public)
+  add_dependencies(openamp_remote_target openamp_remote)
+  add_dependencies(zephyr openamp_remote_target)
+  target_link_libraries(zephyr_interface INTERFACE openamp_remote_target)
+endif()
 
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
