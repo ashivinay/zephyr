@@ -758,5 +758,4 @@ config OCRAM_NOCACHE
 	  Creates linker section and MPU region for OCRAM region with
 	  noncacheable attribute. OCRAM memory is useful for fast DMA transfers.
 
-
 endif # SOC_SERIES_IMX_RT
