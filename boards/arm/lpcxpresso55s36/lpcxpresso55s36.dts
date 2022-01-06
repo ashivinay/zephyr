@@ -1,0 +1,15 @@
+/*
+ * Copyright (c) 2021 NXP
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <nxp/nxp_lpc55S36_ns.dtsi>
+#include "lpcxpresso55s36_common.dtsi"
+
+/ {
+	model = "NXP LPCXpresso55S36 board";
+	compatible = "nxp,lpc55xxx", "nxp,lpc";
+};
