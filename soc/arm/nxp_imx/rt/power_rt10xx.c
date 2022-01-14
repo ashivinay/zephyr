@@ -165,6 +165,16 @@ static void lpm_raise_voltage(void)
 /* Sets device into low power mode */
 __weak void pm_power_state_set(struct pm_state_info info)
 {
+	/*
+	 * Wait for debug console to be inactive. This check is required here
+	 * because twister tests that do not enable device level power management
+	 * may miss console messages if the device enters a low power mode while
+	 * the console is active
+	 */
+	while (!(kLPUART_TransmissionCompleteFlag &
+		LPUART_GetStatusFlags((LPUART_Type *)DT_REG_ADDR(DT_CHOSEN(zephyr_console))))) {
+		;
+	}
 	switch (info.state) {
 	case PM_STATE_RUNTIME_IDLE:
 		lpm_set_sleep_mode_config(kCLOCK_ModeWait);
