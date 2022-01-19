@@ -562,5 +562,17 @@ void main(void)
 			state.boots = 0;
 		}
 	}
+#ifdef CONFIG_PM
+	/*
+	 * Rather than yielding to idle thread, keep the part awake so debugger can
+	 * still access it, since some SOCs are not debugable in low power states.
+	 */
+	uint32_t key = irq_lock();
+
+	while (1) {
+		; /* Spin */
+	}
+	irq_unlock(key);
+#endif
 }
 #endif
