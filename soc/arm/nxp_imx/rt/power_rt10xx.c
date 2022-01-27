@@ -41,6 +41,8 @@ static void lpm_set_sleep_mode_config(clock_mode_t mode)
 {
 	uint32_t clpcr;
 
+	/* Set GPC wakeup config to GPT timer interrupt */
+	GPC_EnableIRQ(GPC, DT_IRQN(DT_INST(0, nxp_gpt_hw_timer)));
 	/*
 	 * ERR050143: CCM: When improper low-power sequence is used,
 	 * the SoC enters low power mode before the ARM core executes WFI.
@@ -97,12 +99,12 @@ static void lpm_enter_sleep_mode(clock_mode_t mode)
 	/* WFI instruction will start entry into WAIT/STOP mode */
 	__WFI();
 
-	/* Clear PRIMASK after wakeup*/
-	__enable_irq();
 }
 
 static void lpm_set_run_mode_config(void)
 {
+	/* Clear GPC wakeup source */
+	GPC_DisableIRQ(GPC, DT_IRQN(DT_INST(0, nxp_gpt_hw_timer)));
 	CCM->CLPCR &= ~(CCM_CLPCR_LPM_MASK | CCM_CLPCR_ARM_CLK_DIS_ON_LPM_MASK);
 }
 
@@ -248,8 +250,6 @@ static int rt10xx_power_init(const struct device *dev)
 	PMU_CoreEnableIncreaseGateDrive(PMU, true);
 
 
-	/* Set GPC wakeup config to GPT timer interrupt */
-	GPC_EnableIRQ(GPC, DT_IRQN(DT_INST(0, nxp_gpt_hw_timer)));
 	return 0;
 }
 
