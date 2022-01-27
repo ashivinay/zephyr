@@ -209,6 +209,9 @@ void clock_full_power(void)
 	/* Init USB1 PLL. This will disable the PLL3 bypass. */
 	CLOCK_INITUSB1PLL(&usb1_pll_config);
 
+	/* Switch SEMC clock to PLL2_PFD2 clock */
+	CLOCK_SETMUX(kCLOCK_SemcMux, 1);
+
 	/* CORE CLK to 600MHz, AHB, IPG to 150MHz, PERCLK to 75MHz */
 	CLOCK_SETDIV(kCLOCK_PerclkDiv, 1);
 	CLOCK_SETDIV(kCLOCK_IpgDiv, 3);
@@ -257,6 +260,8 @@ void clock_low_power(void)
 	CLOCK_SETDIV(kCLOCK_AhbDiv, 0);
 	/* PERCLK mux to IPG CLK */
 	CLOCK_SETMUX(kCLOCK_PerclkMux, 0);
+	/* Switch SEMC clock to peripheral clock */
+	CLOCK_SETMUX(kCLOCK_SemcMux, 0);
 #if (defined(XIP_EXTERNAL_FLASH) && (XIP_EXTERNAL_FLASH == 1))
 	flexspi_exit_critical();
 #endif
