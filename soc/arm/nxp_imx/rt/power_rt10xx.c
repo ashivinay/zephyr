@@ -61,7 +61,8 @@ static void lpm_set_sleep_mode_config(clock_mode_t mode)
 	/* Set clock control module to transfer system to idle mode */
 	clpcr |= CCM_CLPCR_LPM(mode) | CCM_CLPCR_MASK_SCU_IDLE_MASK |
 		     CCM_CLPCR_MASK_L2CC_IDLE_MASK |
-		     CCM_CLPCR_STBY_COUNT_MASK;
+		     CCM_CLPCR_STBY_COUNT_MASK |
+		     CCM_CLPCR_ARM_CLK_DIS_ON_LPM_MASK;
 #ifndef CONFIG_SOC_MIMXRT1011
 	/* RT1011 does not include handshake bits */
 	clpcr |= CCM_CLPCR_BYPASS_LPM_HS0_MASK | CCM_CLPCR_BYPASS_LPM_HS1_MASK;
