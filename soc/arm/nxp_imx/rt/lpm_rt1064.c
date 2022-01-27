@@ -265,7 +265,6 @@ void clock_low_power(void)
 	/* Deinit ARM PLL */
 	CLOCK_DeinitArmPll();
 #endif
-
 	/* Deinit SYS PLL */
 	CLOCK_DeinitSysPll();
 
@@ -276,10 +275,6 @@ void clock_low_power(void)
 	CLOCK_DeinitSysPfd(kCLOCK_Pfd3);
 
 
-	/* Disable PLL3, keep BYPASS and ENABLE bit for PFD0 output */
-	CCM_ANALOG->PLL_USB1 = CCM_ANALOG_PLL_USB1_BYPASS_MASK | CCM_ANALOG_PLL_USB1_ENABLE_MASK;
-	/* Clear PLL3 PFD0 clock gate */
-	CCM_ANALOG->PFD_480_CLR = CCM_ANALOG_PFD_480_PFD0_CLKGATE_MASK;
 	/* Deinit USB1 PLL PFD 1 2 3 */
 	CLOCK_DeinitUsb1Pfd(kCLOCK_Pfd1);
 	CLOCK_DeinitUsb1Pfd(kCLOCK_Pfd2);
@@ -435,7 +430,6 @@ static int imxrt_lpm_init(const struct device *dev)
 	sys_pll_pfd2_frac = IMX_RT_SYS_PFD_FRAC(CCM_ANALOG->PFD_528, kCLOCK_Pfd2);
 	sys_pll_pfd3_frac = IMX_RT_SYS_PFD_FRAC(CCM_ANALOG->PFD_528, kCLOCK_Pfd3);
 
-	/* Ensure that PLL3 PFD0 frac is 12. We rely on this value for a valid flexspi clock */
 	usb1_pll_pfd0_frac = IMX_RT_USB1_PFD_FRAC(CCM_ANALOG->PFD_480, kCLOCK_Pfd0);
 	/* The target full power frequency for the flexspi clock is ~100MHz.
 	 * Use the PFD0 value currently set to calculate the div we should use for
