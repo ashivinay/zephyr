@@ -187,8 +187,6 @@ __weak void pm_power_state_set(struct pm_state_info info)
 	case PM_STATE_RUNTIME_IDLE:
 		lpm_set_sleep_mode_config(kCLOCK_ModeWait);
 		lpm_enter_sleep_mode(kCLOCK_ModeWait);
-		/* Set run mode config after wakeup */
-		lpm_set_run_mode_config();
 		break;
 	case PM_STATE_SUSPEND_TO_IDLE:
 		if (lpm_clock_hooks.clock_set_low_power) {
@@ -198,13 +196,6 @@ __weak void pm_power_state_set(struct pm_state_info info)
 		}
 		lpm_set_sleep_mode_config(kCLOCK_ModeWait);
 		lpm_enter_sleep_mode(kCLOCK_ModeWait);
-		/* Set run mode config after wakeup */
-		lpm_set_run_mode_config();
-		if (lpm_clock_hooks.clock_set_run) {
-			/* Raise core voltage and restore SOC clocks */
-			lpm_raise_voltage();
-			lpm_clock_hooks.clock_set_run();
-		}
 		break;
 	default:
 		return;
@@ -214,8 +205,24 @@ __weak void pm_power_state_set(struct pm_state_info info)
 /* Handle SOC specific activity after Low Power Mode Exit */
 __weak void pm_power_state_exit_post_ops(struct pm_state_info info)
 {
-	ARG_UNUSED(info);
-
+	/* Set run mode config after wakeup */
+	switch (info.state) {
+	case PM_STATE_RUNTIME_IDLE:
+		lpm_set_run_mode_config();
+		break;
+	case PM_STATE_SUSPEND_TO_IDLE:
+		lpm_set_run_mode_config();
+		if (lpm_clock_hooks.clock_set_run) {
+			/* Raise core voltage and restore SOC clocks */
+			lpm_raise_voltage();
+			lpm_clock_hooks.clock_set_run();
+		}
+		break;
+	default:
+		break;
+	}
+	/* Clear PRIMASK after wakeup*/
+	__enable_irq();
 }
 
 /* Initialize power system */
