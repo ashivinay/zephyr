@@ -21,6 +21,10 @@ static struct k_thread ztest_thread;
 #include <unistd.h>
 #endif
 
+//DAS for testing
+uint32_t __dtcm_noinit_section g_Passed_Tests;
+uint32_t __dtcm_noinit_section g_Failed_Tests;
+
 /* ZTEST_DMEM and ZTEST_BMEM are used for the application shared memory test  */
 
 ZTEST_DMEM enum {
@@ -436,9 +440,29 @@ void end_report(void)
 {
 	if (test_status) {
 		TC_END_REPORT(TC_FAIL);
+		g_Failed_Tests++;
 	} else {
 		TC_END_REPORT(TC_PASS);
+		g_Passed_Tests++;
 	}
+	TC_PRINT("Failures: %d\tPasses: %d\n", g_Failed_Tests, g_Passed_Tests);
+	TC_PRINT("SRSR = 0x%x\n\n\n", SRC->SRSR);
+	
+	while(test_status);
+	
+	/* Clear the Reset flags */
+	SRC->SRSR = 0x7FFF7FFF;
+	__DSB();
+	__ISB();
+	
+	/* Flush all logs in case deferred mode and default logging thread are used. */
+	while (IS_ENABLED(CONFIG_TEST_LOGGING_FLUSH_AFTER_TEST) &&
+	       IS_ENABLED(CONFIG_LOG_PROCESS_THREAD) &&
+	       log_data_pending()) {
+		k_msleep(100);
+	}
+
+	__NVIC_SystemReset();
 }
 
 #ifdef CONFIG_USERSPACE
@@ -537,6 +561,12 @@ void main(void)
 #endif
 #endif /* CONFIG_USERSPACE */
 
+	/* Reset test counters if POR reset */
+	if(SRC->SRSR & SRC_SRSR_IPP_RESET_B_M7_MASK) {
+		g_Failed_Tests = 0;
+		g_Passed_Tests = 0;
+	}
+	
 	z_init_mock();
 	test_main();
 	end_report();
