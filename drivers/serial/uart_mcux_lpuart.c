@@ -14,6 +14,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/pm/policy.h>
+#include <zephyr/pm/device.h>
 #ifdef CONFIG_PINCTRL
 #include <zephyr/drivers/pinctrl.h>
 #endif
@@ -1055,6 +1056,41 @@ static int mcux_lpuart_init(const struct device *dev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_DEVICE
+static int mcux_lpuart_pm_action(const struct device *dev,
+				 enum pm_device_action action)
+{
+	const struct mcux_lpuart_config *config = dev->config;
+	int ret = 0;
+
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+#ifdef CONFIG_PINCTRL
+		ret = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
+		if (ret < 0) {
+			return ret;
+		}
+#endif /* CONFIG_PINCTRL */
+
+		break;
+	case PM_DEVICE_ACTION_SUSPEND:
+		LPUART_Deinit(config->base);
+
+#ifdef CONFIG_PINCTRL
+		ret = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_SLEEP);
+		if (ret < 0) {
+			return ret;
+		}
+#endif /* CONFIG_PINCTRL */
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	return ret;
+}
+#endif /* CONFIG_PM_DEVICE */
+
 static const struct uart_driver_api mcux_lpuart_driver_api = {
 	.poll_in = mcux_lpuart_poll_in,
 	.poll_out = mcux_lpuart_poll_out,
@@ -1197,9 +1233,10 @@ static const struct mcux_lpuart_config mcux_lpuart_##n##_config = {		\
 									\
 	LPUART_MCUX_DECLARE_CFG(n)					\
 									\
+	PM_DEVICE_DT_INST_DEFINE(n, mcux_lpuart_pm_action);	     	\
 	DEVICE_DT_INST_DEFINE(n,					\
 			    &mcux_lpuart_init,				\
-			    NULL,					\
+			    PM_DEVICE_DT_INST_GET(n),			\
 			    &mcux_lpuart_##n##_data,			\
 			    &mcux_lpuart_##n##_config,			\
 			    PRE_KERNEL_1,				\
