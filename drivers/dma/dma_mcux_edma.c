@@ -555,7 +555,7 @@ static int dma_mcux_edma_init(const struct device *dev)
 	DEVICE_DT_INST_DEFINE(n,				       \
 			      &dma_mcux_edma_init, NULL,	       \
 			      &dma_data_##n, &dma_config_##n,	       \
-			      POST_KERNEL, CONFIG_DMA_INIT_PRIORITY,   \
+			      PRE_KERNEL_1, CONFIG_DMA_INIT_PRIORITY,   \
 			      &dma_mcux_edma_api);		       \
 								       \
 	DMA_MCUX_EDMA_CONFIG_FUNC(n);

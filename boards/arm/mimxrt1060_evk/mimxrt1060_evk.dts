@@ -175,6 +175,8 @@ arduino_serial: &lpuart3 {};
 &lpuart1 {
 	status = "okay";
 	current-speed = <115200>;
+	dmas = <&edma0 4 2>, <&edma0 5 3>;
+	dma-names = "tx", "rx";
 };
 
 &enet {

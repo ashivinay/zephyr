@@ -26,6 +26,7 @@ LOG_MODULE_REGISTER(uart_mcux_lpuart, LOG_LEVEL_ERR);
 #ifdef CONFIG_UART_ASYNC_API
 struct lpuart_dma_config {
 	const struct device *dma_dev;
+	const uint32_t dma_channel;
 	struct dma_config dma_cfg;
 };
 #endif /* CONFIG_UART_ASYNC_API */
@@ -48,7 +49,6 @@ struct mcux_lpuart_config {
 
 #ifdef CONFIG_UART_ASYNC_API
 struct mcux_lpuart_rx_dma_params {
-	uint32_t dma_channel;
 	struct dma_block_config active_dma_block;
 	uint8_t *buf;
 	size_t buf_len;
@@ -59,7 +59,6 @@ struct mcux_lpuart_rx_dma_params {
 };
 
 struct mcux_lpuart_tx_dma_params {
-	uint32_t dma_channel;
 	struct dma_block_config active_dma_block;
 	const uint8_t *buf;
 	size_t buf_len;
@@ -495,7 +494,7 @@ static void mcux_lpuart_async_rx_flush(const struct device *dev)
 	const struct mcux_lpuart_config *config = dev->config;
 
 	const int get_status_result = dma_get_status(config->rx_dma_config.dma_dev,
-						     data->async.rx_dma_params.dma_channel,
+						     config->rx_dma_config.dma_channel,
 						     &status);
 
 	if (get_status_result == 0) {
@@ -540,7 +539,7 @@ static int mcux_lpuart_rx_disable(const struct device *dev)
 		}
 	}
 	const int ret = dma_stop(config->rx_dma_config.dma_dev,
-				 data->async.rx_dma_params.dma_channel);
+				 config->rx_dma_config.dma_channel);
 
 	if (ret != 0) {
 		LOG_ERR("Error stopping rx DMA. Reason: %x", ret);
@@ -579,17 +578,17 @@ static int configure_and_start_rx_dma(
 {
 	LOG_DBG("Configuring and Starting UART RX DMA");
 	int ret = dma_config(config->rx_dma_config.dma_dev,
-			     data->async.rx_dma_params.dma_channel,
+			     config->rx_dma_config.dma_channel,
 			     (struct dma_config *)&config->rx_dma_config.dma_cfg);
 
 	if (ret != 0) {
 		LOG_ERR("Failed to Configure RX DMA: err: %d", ret);
 		return ret;
 	}
-	ret = dma_start(config->rx_dma_config.dma_dev, data->async.rx_dma_params.dma_channel);
+	ret = dma_start(config->rx_dma_config.dma_dev, config->rx_dma_config.dma_channel);
 	if (ret < 0) {
 		LOG_ERR("Failed to start DMA(Rx) Ch %d(%d)",
-			data->async.rx_dma_params.dma_channel,
+			config->rx_dma_config.dma_channel,
 			ret);
 	}
 	LPUART_EnableRxDMA(lpuart, true);
@@ -607,7 +606,7 @@ static int uart_mcux_lpuart_dma_replace_rx_buffer(const struct device *dev)
 	assert(data->async.next_rx_buffer != NULL);
 	assert(data->async.next_rx_buffer_len != 0U);
 	const int success = dma_reload(config->rx_dma_config.dma_dev,
-				       data->async.rx_dma_params.dma_channel,
+				       config->rx_dma_config.dma_channel,
 				       LPUART_GetDataRegisterAddress(lpuart),
 				       (uint32_t)data->async.next_rx_buffer,
 				       data->async.next_rx_buffer_len);
@@ -642,11 +641,11 @@ static void dma_callback(const struct device *dma_dev, void *callback_arg, uint3
 	}
 
 
-	if (channel == data->async.tx_dma_params.dma_channel) {
+	if (channel == config->tx_dma_config.dma_channel) {
 		LOG_DBG("TX Channel");
 		LPUART_EnableTxDMA(lpuart, false);
 		async_evt_tx_done(dev);
-	} else if (channel == data->async.rx_dma_params.dma_channel) {
+	} else if (channel == config->rx_dma_config.dma_channel) {
 		LOG_DBG("RX Channel");
 		struct mcux_lpuart_rx_dma_params *rx_dma_params = &data->async.rx_dma_params;
 
@@ -702,7 +701,7 @@ static int mcux_lpuart_tx(const struct device *dev, const uint8_t *buf, size_t l
 	/* Check for an ongiong transfer and abort if it is pending */
 	struct dma_status status;
 	const int get_status_result = dma_get_status(config->tx_dma_config.dma_dev,
-						     data->async.tx_dma_params.dma_channel,
+						     config->tx_dma_config.dma_channel,
 						     &status);
 
 	if (get_status_result < 0 || status.busy) {
@@ -724,18 +723,18 @@ static int mcux_lpuart_tx(const struct device *dev, const uint8_t *buf, size_t l
 	data->async.tx_dma_params.active_dma_block.next_block = NULL;
 
 	ret = dma_config(config->tx_dma_config.dma_dev,
-			 data->async.tx_dma_params.dma_channel,
+			 config->tx_dma_config.dma_channel,
 			 (struct dma_config *)&config->tx_dma_config.dma_cfg);
 
 	if (ret == 0) {
-		LOG_DBG("Starting UART DMA TX Ch %u", data->async.tx_dma_params.dma_channel);
+		LOG_DBG("Starting UART DMA TX Ch %u", config->tx_dma_config.dma_channel);
 
 		ret = dma_start(config->tx_dma_config.dma_dev,
-				data->async.tx_dma_params.dma_channel);
+				config->tx_dma_config.dma_channel);
 		LPUART_EnableTxDMA(lpuart, true);
 		if (ret != 0) {
 			LOG_ERR("Failed to start DMA(Tx) Ch %d",
-				data->async.tx_dma_params.dma_channel);
+				config->tx_dma_config.dma_channel);
 		}
 		async_timer_start(&data->async.tx_dma_params.timeout_work, timeout);
 	} else {
@@ -751,7 +750,7 @@ static int mcux_lpuart_tx_abort(const struct device *dev)
 	const struct mcux_lpuart_config *config = dev->config;
 
 	(void)k_work_cancel_delayable(&data->async.tx_dma_params.timeout_work);
-	return dma_stop(config->tx_dma_config.dma_dev, data->async.tx_dma_params.dma_channel);
+	return dma_stop(config->tx_dma_config.dma_dev, config->tx_dma_config.dma_channel);
 }
 
 static int mcux_lpuart_rx_enable(const struct device *dev, uint8_t *buf, const size_t len,
@@ -767,7 +766,7 @@ static int mcux_lpuart_rx_enable(const struct device *dev, uint8_t *buf, const s
 	int key = irq_lock();
 	struct dma_status status;
 	const int get_status_result = dma_get_status(config->rx_dma_config.dma_dev,
-						     rx_dma_params->dma_channel,
+						     config->rx_dma_config.dma_channel,
 						     &status);
 
 	if (get_status_result < 0 || status.busy) {
@@ -909,15 +908,6 @@ static int mcux_lpuart_configure_init(const struct device *dev, const struct uar
 #ifdef CONFIG_UART_ASYNC_API
 	uart_config.rxIdleType = kLPUART_IdleTypeStopBit;
 	uart_config.rxIdleConfig = kLPUART_IdleCharacter1;
-	const enum dma_channel_filter lpuart_filter = DMA_CHANNEL_NORMAL;
-
-	data->async.rx_dma_params.dma_channel =
-		dma_request_channel(config->rx_dma_config.dma_dev, (void *)&lpuart_filter);
-	data->async.tx_dma_params.dma_channel =
-		dma_request_channel(config->tx_dma_config.dma_dev, (void *)&lpuart_filter);
-
-	assert(data->async.tx_dma_params.dma_channel >= 0);
-	assert(data->async.rx_dma_params.dma_channel >= 0);
 	data->async.next_rx_buffer = NULL;
 	data->async.next_rx_buffer_len = 0;
 	data->async.uart_dev = dev;
@@ -1066,6 +1056,8 @@ static const struct uart_driver_api mcux_lpuart_driver_api = {
 	.tx_dma_config = {								       \
 		.dma_dev =								       \
 			DEVICE_DT_GET(DT_INST_DMAS_CTLR_BY_NAME(id, tx)),		       \
+		.dma_channel =								       \
+			DT_INST_DMAS_CELL_BY_NAME(id, tx, mux),				       \
 		.dma_cfg = {								       \
 			.source_burst_length = 1,					       \
 			.dest_burst_length = 1,						       \
@@ -1087,6 +1079,8 @@ static const struct uart_driver_api mcux_lpuart_driver_api = {
 	.rx_dma_config = {								       \
 		.dma_dev =								       \
 			DEVICE_DT_GET(DT_INST_DMAS_CTLR_BY_NAME(id, rx)),		       \
+		.dma_channel =								       \
+			DT_INST_DMAS_CELL_BY_NAME(id, rx, mux),				       \
 		.dma_cfg = {								       \
 			.source_burst_length = 1,					       \
 			.dest_burst_length = 1,						       \
