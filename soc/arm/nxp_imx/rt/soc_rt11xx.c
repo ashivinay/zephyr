@@ -588,6 +588,15 @@ static int imxrt_init(const struct device *arg)
 	}
 #endif
 
+#if (DT_DEP_ORD(DT_NODELABEL(ocram)) != DT_DEP_ORD(DT_CHOSEN(zephyr_sram))) && \
+	CONFIG_OCRAM_NOCACHE
+	/* Copy data from flash to OCRAM */
+	memcpy(&__ocram_data_start, &__ocram_data_load_start,
+		(&__ocram_data_end - &__ocram_data_start));
+	/* Zero BSS region */
+	memset(&__ocram_bss_start, 0, (&__ocram_bss_end - &__ocram_bss_start));
+#endif
+
 	/* Initialize system clock */
 	clock_init();
 
