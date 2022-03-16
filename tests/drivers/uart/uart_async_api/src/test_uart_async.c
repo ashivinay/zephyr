@@ -69,30 +69,59 @@ void test_single_read_setup(void)
 			  (void *) &tx_aborted_count);
 }
 
+void dump_buffers(const uint8_t *tx, const uint8_t *rx, uint16_t len)
+{
+	TC_PRINT("TX:\n");
+	for (uint16_t i = 0; i < len; i++) {
+		TC_PRINT("0x%02X,", tx[i]);
+		if (((i + 1) & 0xF) == 0x0) {
+			TC_PRINT("\n");
+		}
+	}
+	TC_PRINT("\n");
+	TC_PRINT("RX:\n");
+	for (uint16_t i = 0; i < len; i++) {
+		TC_PRINT("0x%02X,", rx[i]);
+		if (((i + 1) & 0xF) == 0x0) {
+			TC_PRINT("\n");
+		}
+	}
+	TC_PRINT("\n");
+}
+
+
+static __aligned(16) char single_read_rx_buf[16]
+	__attribute__((__section__(".dtcm_bss"))) __used;
+static __aligned(16) char single_read_tx_buf[5]
+	__attribute__((__section__(".dtcm_data"))) __used = "test";
 void test_single_read(void)
 {
-	uint8_t rx_buf[10] = {0};
 
 	/* Check also if sending from read only memory (e.g. flash) works. */
-	static const uint8_t tx_buf[5] = "test";
 
-	zassert_not_equal(memcmp(tx_buf, rx_buf, 5), 0,
+	memset(single_read_rx_buf, 0xDE, 10);
+
+	zassert_not_equal(memcmp(single_read_tx_buf, single_read_rx_buf, 5), 0,
 			  "Initial buffer check failed");
 
-	uart_rx_enable(uart_dev, rx_buf, 10, 50 * USEC_PER_MSEC);
+	uart_rx_enable(uart_dev, single_read_rx_buf, 10, 50 * USEC_PER_MSEC);
 	zassert_equal(k_sem_take(&rx_rdy, K_MSEC(100)), -EAGAIN,
 		      "RX_RDY not expected at this point");
-
-	uart_tx(uart_dev, tx_buf, sizeof(tx_buf), 100 * USEC_PER_MSEC);
+	uart_tx(uart_dev, single_read_tx_buf, sizeof(single_read_tx_buf), 100 * USEC_PER_MSEC);
 	zassert_equal(k_sem_take(&tx_done, K_MSEC(100)), 0, "TX_DONE timeout");
 	zassert_equal(k_sem_take(&rx_rdy, K_MSEC(100)), 0, "RX_RDY timeout");
 	zassert_equal(k_sem_take(&rx_rdy, K_MSEC(100)), -EAGAIN,
 		      "Extra RX_RDY received");
 
-	zassert_equal(memcmp(tx_buf, rx_buf, 5), 0, "Buffers not equal");
-	zassert_not_equal(memcmp(tx_buf, rx_buf+5, 5), 0, "Buffers not equal");
+	TC_PRINT("RX: %p, TX %p\n", single_read_rx_buf, single_read_tx_buf);
 
-	uart_tx(uart_dev, tx_buf, sizeof(tx_buf), 100 * USEC_PER_MSEC);
+	dump_buffers(single_read_tx_buf, single_read_rx_buf, sizeof(single_read_tx_buf));
+
+	zassert_equal(memcmp(single_read_tx_buf, single_read_rx_buf, 5), 0, "Buffers not equal");
+	zassert_not_equal(memcmp(single_read_tx_buf, single_read_rx_buf+5, 5), 0,
+		"Buffers not equal");
+
+	uart_tx(uart_dev, single_read_tx_buf, sizeof(single_read_tx_buf), 100 * USEC_PER_MSEC);
 	zassert_equal(k_sem_take(&tx_done, K_MSEC(100)), 0, "TX_DONE timeout");
 	zassert_equal(k_sem_take(&rx_rdy, K_MSEC(100)), 0, "RX_RDY timeout");
 	zassert_equal(k_sem_take(&rx_buf_released, K_MSEC(100)),
@@ -103,7 +132,7 @@ void test_single_read(void)
 	zassert_equal(k_sem_take(&rx_rdy, K_MSEC(100)), -EAGAIN,
 		      "Extra RX_RDY received");
 
-	zassert_equal(memcmp(tx_buf, rx_buf+5, 5), 0, "Buffers not equal");
+	zassert_equal(memcmp(single_read_tx_buf, single_read_rx_buf+5, 5), 0, "Buffers not equal");
 	zassert_equal(tx_aborted_count, 0, "TX aborted triggered");
 }
 
