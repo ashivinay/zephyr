@@ -2,7 +2,7 @@
 
 / {
        chosen {
-               zephyr,sram = &dtcm;
+               zephyr,sram = &ocram;
        };
 };
 
