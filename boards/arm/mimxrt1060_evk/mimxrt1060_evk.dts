@@ -207,7 +207,8 @@ arduino_serial: &lpuart3 {
 &adc1 {
 	status = "okay";
 	pinctrl-0 = <&pinmux_adc1>;
-	pinctrl-names = "default";
+	pinctrl-1 = <&pinmux_adc1_sleep>;
+	pinctrl-names = "default", "sleep";
 };
 
 zephyr_udc0: &usb1 {
@@ -239,7 +240,8 @@ zephyr_udc0: &usb1 {
 	status = "okay";
 	bus-speed = <125000>;
 	pinctrl-0 = <&pinmux_flexcan2>;
-	pinctrl-names = "default";
+	pinctrl-1 = <&pinmux_flexcan2_sleep>;
+	pinctrl-names = "default", "sleep";
 
 	can-transceiver {
 		max-bitrate = <5000000>;
@@ -256,7 +258,8 @@ zephyr_udc0: &usb1 {
 	dmas = <&edma0 0 13>, <&edma0 1 14>;
 	dma-names = "rx", "tx";
 	pinctrl-0 = <&pinmux_lpspi1>;
-	pinctrl-names = "default";
+	pinctrl-1 = <&pinmux_lpspi1_sleep>;
+	pinctrl-names = "default", "sleep";
 };
 
 &lpspi3 {
@@ -265,14 +268,16 @@ zephyr_udc0: &usb1 {
 	dmas = <&edma0 2 15>, <&edma0 3 16>;
 	dma-names = "rx", "tx";
 	pinctrl-0 = <&pinmux_lpspi3>;
-	pinctrl-names = "default";
+	pinctrl-1 = <&pinmux_lpspi3_sleep>;
+	pinctrl-names = "default", "sleep";
 
 };
 
 &sai1 {
 	status = "okay";
 	pinctrl-0 = <&pinmux_sai1>;
-	pinctrl-names = "default";
+	pinctrl-1 = <&pinmux_sai1_sleep>;
+	pinctrl-names = "default", "sleep";
 };
 
 /* Enable GPT for use as a hardware timer. This disables Cortex Systick.
