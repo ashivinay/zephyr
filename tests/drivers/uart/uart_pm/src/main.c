@@ -11,6 +11,8 @@
 
 #if defined(CONFIG_BOARD_NRF52840DK_NRF52840)
 #define LABEL uart0
+#elif defined(CONFIG_BOARD_MIMXRT1060_EVK)
+#define LABEL lpuart1
 #endif
 
 #define UART_DEVICE_DEV DT_NODELABEL(LABEL)
