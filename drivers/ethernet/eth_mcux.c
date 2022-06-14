@@ -117,6 +117,9 @@ extern uint32_t ENET_GetInstance(ENET_Type * base);
 static const clock_ip_name_t enet_clocks[] = ENET_CLOCKS;
 #endif
 
+/* Number of RX buffers and RX buffer descriptors exposed to HAL */
+#define ETH_MCUX_HAL_RX_BUFFERS (CONFIG_ETH_MCUX_RX_BUFFERS / 2)
+
 static void eth_mcux_init(const struct device *dev);
 
 #if defined(CONFIG_ETH_MCUX_PHY_EXTRA_DEBUG)
@@ -150,6 +153,26 @@ static const char *eth_name(ENET_Type *base)
 		return "unknown";
 	}
 }
+
+
+/* Use ENET_FRAME_MAX_VLANFRAMELEN for VLAN frame size
+ * Use ENET_FRAME_MAX_FRAMELEN for Ethernet frame size
+ */
+#if defined(CONFIG_NET_VLAN)
+#if !defined(ENET_FRAME_MAX_VLANFRAMELEN)
+#define ENET_FRAME_MAX_VLANFRAMELEN (ENET_FRAME_MAX_FRAMELEN + 4)
+#endif
+#define ETH_MCUX_BUFFER_SIZE \
+	ROUND_UP(ENET_FRAME_MAX_VLANFRAMELEN, ENET_BUFF_ALIGNMENT)
+#else
+#define ETH_MCUX_BUFFER_SIZE \
+	ROUND_UP(ENET_FRAME_MAX_FRAMELEN, ENET_BUFF_ALIGNMENT)
+#endif /* CONFIG_NET_VLAN */
+
+struct rx_buf_data {
+	uint8_t *data; /* Data buffer this struct tracks */
+	bool in_use; /* Is this buffer in use by the driver? */
+};
 
 struct eth_context {
 	ENET_Type *base;
@@ -210,7 +233,9 @@ struct eth_context {
 	 * size is 1514 bytes.
 	 */
 	struct k_mutex tx_frame_buf_mutex;
-	struct k_mutex rx_frame_buf_mutex;
+	struct rx_buf_data rx_bufs[CONFIG_ETH_MCUX_RX_BUFFERS]; /* Tracking data for RX buf pool */
+	uint8_t (*rx_buf_pool)[ETH_MCUX_BUFFER_SIZE]; /* RX buffer pool */
+	struct k_mutex rx_buf_mutex;
 	uint8_t *tx_frame_buf; /* Max MTU + ethernet header */
 	uint8_t *rx_frame_buf; /* Max MTU + ethernet header */
 #if defined(CONFIG_PINCTRL)
@@ -222,20 +247,6 @@ struct eth_context {
 #endif
 	const struct gpio_dt_spec trace_gpios[4];
 };
-
-/* Use ENET_FRAME_MAX_VLANFRAMELEN for VLAN frame size
- * Use ENET_FRAME_MAX_FRAMELEN for Ethernet frame size
- */
-#if defined(CONFIG_NET_VLAN)
-#if !defined(ENET_FRAME_MAX_VLANFRAMELEN)
-#define ENET_FRAME_MAX_VLANFRAMELEN (ENET_FRAME_MAX_FRAMELEN + 4)
-#endif
-#define ETH_MCUX_BUFFER_SIZE \
-	ROUND_UP(ENET_FRAME_MAX_VLANFRAMELEN, ENET_BUFF_ALIGNMENT)
-#else
-#define ETH_MCUX_BUFFER_SIZE \
-	ROUND_UP(ENET_FRAME_MAX_FRAMELEN, ENET_BUFF_ALIGNMENT)
-#endif /* CONFIG_NET_VLAN */
 
 #if defined(CONFIG_NET_POWER_MANAGEMENT)
 static void eth_mcux_phy_enter_reset(struct eth_context *context);
@@ -754,6 +765,53 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	return 0;
 }
 
+
+/*
+ * Allocates a buffer from the available RX buffer pool, which will be used
+ * as a storage destination for a received ethernet frame.
+ */
+static void *eth_mcux_rx_alloc(ENET_Type *base, void *user_data, uint8_t ring)
+{
+	struct eth_context *context = user_data;
+	int i;
+
+	k_mutex_lock(&context->rx_buf_mutex, K_FOREVER);
+
+	/* Find the first free buffer in the pool */
+	for (i = 0; i < CONFIG_ETH_MCUX_RX_BUFFERS; i++) {
+		if (!context->rx_bufs[i].in_use) {
+			context->rx_bufs[i].in_use = true;
+			k_mutex_unlock(&context->rx_buf_mutex);
+			return context->rx_bufs[i].data;
+		}
+	}
+	LOG_WRN("Enet driver layer is out of RX buffers!");
+	k_mutex_unlock(&context->rx_buf_mutex);
+	return NULL;
+}
+
+/*
+ * Frees a buffer in the available RX buffer pool. This buffer can then
+ * be reused by the driver at a later date.
+ */
+static void eth_mcux_rx_free(ENET_Type *base, void *buffer, void *user_data,
+	uint8_t ring)
+{
+	struct eth_context *context = user_data;
+	int idx;
+
+	k_mutex_lock(&context->rx_buf_mutex, K_FOREVER);
+
+	/* Use the offset of the buffer to determine which tracking
+	 * structure corresponds to it- we know the size of the buffer we
+	 * are passed, since all rx buffers all a fixed size.
+	 */
+	idx = ((uint8_t (*)[ETH_MCUX_BUFFER_SIZE])buffer) - context->rx_buf_pool;
+	__ASSERT(context->rx_bufs[idx].in_use, "Attempting to free an unallocated buffer");
+	context->rx_bufs[idx].in_use = false;
+	k_mutex_unlock(&context->rx_buf_mutex);
+}
+
 static int eth_rx(struct eth_context *context)
 {
 	uint16_t vlan_tag = NET_VLAN_TAG_UNSPEC;
@@ -761,25 +819,28 @@ static int eth_rx(struct eth_context *context)
 	struct net_if *iface;
 	struct net_pkt *pkt;
 	status_t status;
-	uint32_t ts;
+	enet_buffer_struct_t buffers[1];
+	enet_rx_frame_struct_t rx_frame = {
+		.rxBuffArray = &buffers[0],
+	};
 
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	enet_ptp_time_t ptpTimeData;
 #endif
 
-	status = ENET_GetRxFrameSize(&context->enet_handle,
-				     (uint32_t *)&frame_length, RING_ID);
+	status = ENET_GetRxFrame(context->base, &context->enet_handle,
+		&rx_frame, RING_ID);
 	if (status == kStatus_ENET_RxFrameEmpty) {
 		return 0;
 	} else if (status == kStatus_ENET_RxFrameError) {
-		enet_data_error_stats_t error_stats;
-
-		LOG_ERR("ENET_GetRxFrameSize return: %d", (int)status);
-
-		ENET_GetRxErrBeforeReadFrame(&context->enet_handle,
-					     &error_stats, RING_ID);
-		goto flush;
+		LOG_ERR("ENET_GetRxFrame return: %d", (int)status);
+		return -EIO;
+	} else if (status == kStatus_ENET_RxFrameDrop) {
+		LOG_WRN("ENET Frame dropped");
+		return -EIO;
 	}
+
+	frame_length = rx_frame.totLen;
 
 	if (frame_length > NET_ETH_MAX_FRAME_SIZE) {
 		LOG_ERR("frame too large (%d)", frame_length);
@@ -795,29 +856,15 @@ static int eth_rx(struct eth_context *context)
 		goto flush;
 	}
 
-	/* in case multiply thread access
-	 * we need to protect it with mutex.
-	 */
-	k_mutex_lock(&context->rx_frame_buf_mutex, K_FOREVER);
-	status = ENET_ReadFrame(context->base, &context->enet_handle,
-				context->rx_frame_buf, frame_length, RING_ID, &ts);
-
-	if (status) {
-		LOG_ERR("ENET_ReadFrame failed: %d", (int)status);
-		net_pkt_unref(pkt);
-
-		k_mutex_unlock(&context->rx_frame_buf_mutex);
-		goto error;
-	}
-
-	if (net_pkt_write(pkt, context->rx_frame_buf, frame_length)) {
+	if (net_pkt_write(pkt, rx_frame.rxBuffArray[0].buffer, frame_length)) {
 		LOG_ERR("Unable to write frame into the pkt");
 		net_pkt_unref(pkt);
-		k_mutex_unlock(&context->rx_frame_buf_mutex);
 		goto error;
 	}
-
-	k_mutex_unlock(&context->rx_frame_buf_mutex);
+	/* For now, Zephyr does not support zero copy networking.
+	 * This means that we can "free" the network buffer now
+	 */
+	eth_mcux_rx_free(context->base, rx_frame.rxBuffArray[0].buffer, context, RING_ID);
 
 #if defined(CONFIG_NET_VLAN)
 	{
@@ -968,16 +1015,12 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
-	int ret;
 
 	while (1) {
 		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
-			do {
-				gpio_pin_set_dt(&context->trace_gpios[0], 1);
-				ret = eth_rx(context);
-				gpio_pin_set_dt(&context->trace_gpios[0], 0);
-			} while (ret == 1);
-
+			gpio_pin_set_dt(&context->trace_gpios[0], 1);
+			eth_rx(context);
+			gpio_pin_set_dt(&context->trace_gpios[0], 0);
 			/* enable the IRQ for RX */
 			ENET_EnableInterrupts(context->base,
 			  kENET_RxFrameInterrupt | kENET_RxBufferInterrupt);
@@ -1040,6 +1083,7 @@ static int eth_phy_init(const struct device *dev)
 }
 #endif
 
+
 static void eth_mcux_init(const struct device *dev)
 {
 	struct eth_context *context = dev->data;
@@ -1067,6 +1111,11 @@ static void eth_mcux_init(const struct device *dev)
 	sys_clock = CLOCK_GetFreq(kCLOCK_CoreSysClk);
 #endif
 
+	for (int i = 0; i < CONFIG_ETH_MCUX_RX_BUFFERS; i++) {
+		context->rx_bufs[i].data = context->rx_buf_pool[i];
+		context->rx_bufs[i].in_use = false;
+	}
+
 	ENET_GetDefaultConfig(&enet_config);
 	enet_config.interrupt |= kENET_RxFrameInterrupt;
 	enet_config.interrupt |= kENET_TxFrameInterrupt;
@@ -1074,6 +1123,9 @@ static void eth_mcux_init(const struct device *dev)
 	enet_config.interrupt |= kENET_MiiInterrupt;
 #endif
 	enet_config.miiMode = kENET_RmiiMode;
+	enet_config.rxBuffAlloc = eth_mcux_rx_alloc;
+	enet_config.rxBuffFree = eth_mcux_rx_free;
+	enet_config.userData = context;
 
 	if (IS_ENABLED(CONFIG_ETH_MCUX_PROMISCUOUS_MODE)) {
 		enet_config.macSpecialConfig |= kENET_ControlPromiscuousEnable;
@@ -1173,10 +1225,10 @@ static int eth_init(const struct device *dev)
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	k_mutex_init(&context->ptp_mutex);
 #endif
-	k_mutex_init(&context->rx_frame_buf_mutex);
+	k_mutex_init(&context->rx_buf_mutex);
 	k_mutex_init(&context->tx_frame_buf_mutex);
 
-	k_sem_init(&context->rx_thread_sem, 0, CONFIG_ETH_MCUX_RX_BUFFERS);
+	k_sem_init(&context->rx_thread_sem, 0, ETH_MCUX_HAL_RX_BUFFERS);
 	k_sem_init(&context->tx_thread_sem, 0, CONFIG_ETH_MCUX_TX_BUFFERS);
 	k_sem_init(&context->tx_buf_sem,
 		   0, CONFIG_ETH_MCUX_TX_BUFFERS);
@@ -1600,8 +1652,6 @@ static void eth_mcux_err_isr(const struct device *dev)
 	static void eth##n##_config_func(void);				\
 	static uint8_t							\
 		tx_enet_frame_##n##_buf[NET_ETH_MAX_FRAME_SIZE];	\
-	static uint8_t							\
-		rx_enet_frame_##n##_buf[NET_ETH_MAX_FRAME_SIZE];	\
 									\
 	static mdio_handle_t eth##n##_mdio_handle = {			\
 		  .resource.base = (ENET_Type *)DT_INST_REG_ADDR(n),	\
@@ -1611,30 +1661,9 @@ static void eth_mcux_err_isr(const struct device *dev)
 		  .mdioHandle = &eth##n##_mdio_handle,			\
 		};							\
 									\
-	static struct eth_context eth##n##_context = {			\
-		.base = (ENET_Type *)DT_INST_REG_ADDR(n),		\
-		.config_func = eth##n##_config_func,			\
-		.phy_addr = DT_INST_PROP(n, phy_addr),		\
-		.phy_duplex = kPHY_FullDuplex,				\
-		.phy_speed = kPHY_Speed100M,				\
-		.phy_handle = &eth##n##_phy_handle,			\
-		.tx_frame_buf = tx_enet_frame_##n##_buf,		\
-		.rx_frame_buf = rx_enet_frame_##n##_buf,		\
-		.trace_gpios = {					\
-			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 0),\
-			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 1),\
-			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 2),\
-			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 3),\
-			},						\
-		ETH_MCUX_PINCTRL_INIT(n)				\
-		ETH_MCUX_PHY_GPIOS(n)					\
-		ETH_MCUX_MAC_ADDR(n)					\
-		ETH_MCUX_POWER(n)					\
-	};								\
-									\
 	static NOCACHE __aligned(ENET_BUFF_ALIGNMENT)			\
 		enet_rx_bd_struct_t					\
-		eth##n##_rx_buffer_desc[CONFIG_ETH_MCUX_RX_BUFFERS];	\
+		eth##n##_rx_buffer_desc[ETH_MCUX_HAL_RX_BUFFERS];	\
 									\
 	static NOCACHE __aligned(ENET_BUFF_ALIGNMENT)			\
 		enet_tx_bd_struct_t					\
@@ -1648,16 +1677,37 @@ static void eth_mcux_err_isr(const struct device *dev)
 		eth##n##_tx_buffer[CONFIG_ETH_MCUX_TX_BUFFERS]		\
 				  [ETH_MCUX_BUFFER_SIZE];		\
 									\
+	static struct eth_context eth##n##_context = {			\
+		.base = (ENET_Type *)DT_INST_REG_ADDR(n),		\
+		.config_func = eth##n##_config_func,			\
+		.phy_addr = DT_INST_PROP(n, phy_addr),			\
+		.phy_duplex = kPHY_FullDuplex,				\
+		.phy_speed = kPHY_Speed100M,				\
+		.phy_handle = &eth##n##_phy_handle,			\
+		.tx_frame_buf = tx_enet_frame_##n##_buf,		\
+		.rx_buf_pool = eth##n##_rx_buffer,			\
+		.trace_gpios = {					\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 0),\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 1),\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 2),\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 3),\
+			},						\
+		ETH_MCUX_PINCTRL_INIT(n)				\
+		ETH_MCUX_PHY_GPIOS(n)					\
+		ETH_MCUX_MAC_ADDR(n)					\
+		ETH_MCUX_POWER(n)					\
+	};								\
+									\
 	ETH_MCUX_PTP_FRAMEINFO_ARRAY(n)					\
 									\
 	static const enet_buffer_config_t eth##n##_buffer_config = {	\
-		.rxBdNumber = CONFIG_ETH_MCUX_RX_BUFFERS,		\
+		.rxBdNumber = ETH_MCUX_HAL_RX_BUFFERS,		\
 		.txBdNumber = CONFIG_ETH_MCUX_TX_BUFFERS,		\
 		.rxBuffSizeAlign = ETH_MCUX_BUFFER_SIZE,		\
 		.txBuffSizeAlign = ETH_MCUX_BUFFER_SIZE,		\
 		.rxBdStartAddrAlign = eth##n##_rx_buffer_desc,		\
 		.txBdStartAddrAlign = eth##n##_tx_buffer_desc,		\
-		.rxBufferAlign = eth##n##_rx_buffer[0],			\
+		.rxBufferAlign = NULL,					\
 		.txBufferAlign = eth##n##_tx_buffer[0],			\
 		.rxMaintainEnable = true,				\
 		.txMaintainEnable = true,				\
