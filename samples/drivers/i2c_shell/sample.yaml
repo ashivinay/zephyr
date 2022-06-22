@@ -1,0 +1,8 @@
+sample:
+  name: I2C shell demo
+tests:
+  sample.drivers.i2c.shell:
+    tags: drivers
+    depends_on: i2c
+    harness: sensor
+    filter: dt_alias_exists("accel-0")
