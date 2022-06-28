@@ -247,6 +247,10 @@ zephyr_udc0: &usbotg {
 		pinctrl-0 = <&ptp_default>;
 		pinctrl-names = "default";
 	};
+	trace-gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>,
+			<&gpioc 4 GPIO_ACTIVE_HIGH>,
+			<&gpiod 0 GPIO_ACTIVE_HIGH>,
+			<&gpiod 2 GPIO_ACTIVE_HIGH>;
 };
 
 &flexcan0 {

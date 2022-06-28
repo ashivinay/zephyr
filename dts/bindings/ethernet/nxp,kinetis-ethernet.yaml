@@ -25,3 +25,8 @@ properties:
       required: false
       description:
         interrupt GPIO for PHY. Will be pulled high before reset is asserted.
+    trace-gpios:
+      type: phandle-array
+      required: true
+      description:
+        driver tracing gpios

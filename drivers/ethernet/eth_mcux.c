@@ -220,6 +220,7 @@ struct eth_context {
 	const struct gpio_dt_spec int_gpio;
 	const struct gpio_dt_spec reset_gpio;
 #endif
+	const struct gpio_dt_spec trace_gpios[4];
 };
 
 /* Use ENET_FRAME_MAX_VLANFRAMELEN for VLAN frame size
@@ -712,6 +713,8 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 
 	k_mutex_lock(&context->tx_frame_buf_mutex, K_FOREVER);
 
+	gpio_pin_set_dt(&context->trace_gpios[1], 1);
+
 	if (net_pkt_read(pkt, context->tx_frame_buf, total_len)) {
 		k_mutex_unlock(&context->tx_frame_buf_mutex);
 		return -EIO;
@@ -746,6 +749,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 
 	k_mutex_unlock(&context->tx_frame_buf_mutex);
 	k_sem_take(&context->tx_buf_sem, K_FOREVER);
+	gpio_pin_set_dt(&context->trace_gpios[1], 0);
 
 	return 0;
 }
@@ -784,8 +788,10 @@ static int eth_rx(struct eth_context *context)
 
 	/* Using root iface. It will be updated in net_recv_data() */
 	pkt = net_pkt_rx_alloc_with_buffer(context->iface, frame_length,
-					   AF_UNSPEC, 0, K_NO_WAIT);
+					   AF_UNSPEC, 0, K_MSEC(100));
+
 	if (!pkt) {
+		LOG_ERR("Could not allocate RX packet");
 		goto flush;
 	}
 
@@ -793,9 +799,9 @@ static int eth_rx(struct eth_context *context)
 	 * we need to protect it with mutex.
 	 */
 	k_mutex_lock(&context->rx_frame_buf_mutex, K_FOREVER);
-
 	status = ENET_ReadFrame(context->base, &context->enet_handle,
 				context->rx_frame_buf, frame_length, RING_ID, &ts);
+
 	if (status) {
 		LOG_ERR("ENET_ReadFrame failed: %d", (int)status);
 		net_pkt_unref(pkt);
@@ -962,12 +968,16 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
+	int ret;
 
 	while (1) {
 		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
-			while (eth_rx(context) == 1) {
-				;
-			}
+			do {
+				gpio_pin_set_dt(&context->trace_gpios[0], 1);
+				ret = eth_rx(context);
+				gpio_pin_set_dt(&context->trace_gpios[0], 0);
+			} while (ret == 1);
+
 			/* enable the IRQ for RX */
 			ENET_EnableInterrupts(context->base,
 			  kENET_RxFrameInterrupt | kENET_RxBufferInterrupt);
@@ -1080,6 +1090,18 @@ static void eth_mcux_init(const struct device *dev)
 		enet_config.rxAccelerConfig |=
 			kENET_RxAccelIpCheckEnabled |
 			kENET_RxAccelProtoCheckEnabled;
+	}
+
+	/* Configure gpio pins */
+	for (int i = 0; i < ARRAY_SIZE(context->trace_gpios); i++) {
+		if (!device_is_ready(context->trace_gpios[i].port)) {
+			return;
+		}
+		/* Configure GPIO */
+		if (gpio_pin_configure_dt(&context->trace_gpios[i],
+			GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN)) {
+			return;
+		}
 	}
 
 	ENET_Init(context->base,
@@ -1598,6 +1620,12 @@ static void eth_mcux_err_isr(const struct device *dev)
 		.phy_handle = &eth##n##_phy_handle,			\
 		.tx_frame_buf = tx_enet_frame_##n##_buf,		\
 		.rx_frame_buf = rx_enet_frame_##n##_buf,		\
+		.trace_gpios = {					\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 0),\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 1),\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 2),\
+			GPIO_DT_SPEC_INST_GET_BY_IDX(n, trace_gpios, 3),\
+			},						\
 		ETH_MCUX_PINCTRL_INIT(n)				\
 		ETH_MCUX_PHY_GPIOS(n)					\
 		ETH_MCUX_MAC_ADDR(n)					\

@@ -250,6 +250,11 @@ arduino_serial: &lpuart3 {
 		pinctrl-names = "default";
 		status = "okay";
 	};
+	trace-gpios = <&gpio1 26 GPIO_ACTIVE_HIGH>,
+			<&gpio1 27 GPIO_ACTIVE_HIGH>,
+			<&gpio1 20 GPIO_ACTIVE_HIGH>,
+			<&gpio1 21 GPIO_ACTIVE_HIGH>;
+
 };
 
 zephyr_udc0: &usb1 {

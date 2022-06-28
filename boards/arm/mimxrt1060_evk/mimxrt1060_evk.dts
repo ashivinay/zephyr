@@ -198,6 +198,11 @@ arduino_serial: &lpuart3 {
 	pinctrl-names = "default";
 	int-gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;
 	reset-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+	/* Pins 1-3 on J33 */
+	trace-gpios = <&gpio1 26 GPIO_ACTIVE_HIGH>,
+			<&gpio1 27 GPIO_ACTIVE_HIGH>,
+			<&gpio1 20 GPIO_ACTIVE_HIGH>,
+			<&gpio1 21 GPIO_ACTIVE_HIGH>;
 	ptp {
 		pinctrl-0 = <&pinmux_ptp>;
 		pinctrl-names = "default";
