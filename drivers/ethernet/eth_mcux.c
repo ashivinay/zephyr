@@ -1015,15 +1015,19 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
+	int ret;
 
 	while (1) {
 		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
-			gpio_pin_set_dt(&context->trace_gpios[0], 1);
-			eth_rx(context);
-			gpio_pin_set_dt(&context->trace_gpios[0], 0);
+			/* disable the IRQ for RX */
+			ENET_DisableInterrupts(context->base, kENET_RxFrameInterrupt);
+			do {
+				gpio_pin_set_dt(&context->trace_gpios[0], 1);
+				ret = eth_rx(context);
+				gpio_pin_set_dt(&context->trace_gpios[0], 0);
+			} while (ret == 1);
 			/* enable the IRQ for RX */
-			ENET_EnableInterrupts(context->base,
-			  kENET_RxFrameInterrupt | kENET_RxBufferInterrupt);
+			ENET_EnableInterrupts(context->base, kENET_RxFrameInterrupt);
 		}
 	}
 }
@@ -1416,7 +1420,6 @@ static void eth_mcux_common_isr(const struct device *dev)
 	int irq_lock_key = irq_lock();
 
 	if (EIR & (kENET_RxBufferInterrupt | kENET_RxFrameInterrupt)) {
-		/* disable the IRQ for RX */
 		context->rx_irq_num++;
 #if FSL_FEATURE_ENET_QUEUE > 1
 		/* Only use ring 0 in this driver */
@@ -1424,8 +1427,6 @@ static void eth_mcux_common_isr(const struct device *dev)
 #else
 		ENET_ReceiveIRQHandler(context->base, &context->enet_handle);
 #endif
-		ENET_DisableInterrupts(context->base, kENET_RxFrameInterrupt |
-			kENET_RxBufferInterrupt);
 	}
 
 	if (EIR & kENET_TxFrameInterrupt) {
@@ -1453,7 +1454,6 @@ static void eth_mcux_common_isr(const struct device *dev)
 	if (EIR) {
 		ENET_ClearInterruptStatus(context->base,
 		  ~(kENET_TxBufferInterrupt | kENET_TxFrameInterrupt
-		    | kENET_RxBufferInterrupt | kENET_RxFrameInterrupt
 		    | ENET_EIR_MII_MASK | ENET_TS_INTERRUPT));
 	}
 	irq_unlock(irq_lock_key);
@@ -1671,7 +1671,8 @@ static void eth_mcux_err_isr(const struct device *dev)
 									\
 	static uint8_t __aligned(ENET_BUFF_ALIGNMENT)			\
 		eth##n##_rx_buffer[CONFIG_ETH_MCUX_RX_BUFFERS]		\
-				  [ETH_MCUX_BUFFER_SIZE];		\
+				  [ETH_MCUX_BUFFER_SIZE]		\
+				  __dtcm_noinit_section;		\
 									\
 	static uint8_t __aligned(ENET_BUFF_ALIGNMENT)			\
 		eth##n##_tx_buffer[CONFIG_ETH_MCUX_TX_BUFFERS]		\
