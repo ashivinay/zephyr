@@ -53,6 +53,21 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #if defined(CONFIG_PINCTRL)
 #include <zephyr/drivers/pinctrl.h>
 #endif
+#if defined(CONFIG_SEGGER_SYSTEMVIEW)
+#include <SEGGER_SYSVIEW.h>
+
+SEGGER_SYSVIEW_MODULE enet_module = {
+	.sModule = "M=MCUX_ENET",
+	.NumEvents = 4,
+	.EventOffset = 0,
+};
+
+#define ETH_MCUX_READ_FRAME_EVENT (enet_module.EventOffset + 0U)
+#define ETH_MCUX_SEND_FRAME_EVENT (enet_module.EventOffset + 1U)
+#define ETH_MCUX_SLAB_ALLOC_EVENT (enet_module.EventOffset + 2U)
+#define ETH_MCUX_RX_THREAD_EVENT (enet_module.EventOffset + 3U)
+
+#endif
 
 #include "eth.h"
 
@@ -118,7 +133,7 @@ static const clock_ip_name_t enet_clocks[] = ENET_CLOCKS;
 #endif
 
 /* Number of RX buffers and RX buffer descriptors exposed to HAL */
-#define ETH_MCUX_HAL_RX_BUFFERS (CONFIG_ETH_MCUX_RX_BUFFERS / 2)
+#define ETH_MCUX_HAL_RX_BUFFERS (CONFIG_ETH_MCUX_RX_BUFFERS - 2)
 
 static void eth_mcux_init(const struct device *dev);
 
@@ -195,9 +210,9 @@ struct eth_context {
 	struct k_mutex ptp_mutex;
 #endif
 	struct k_sem tx_buf_sem;
+	struct k_sem tx_int_sem;
 	phy_handle_t *phy_handle;
 	struct k_sem rx_thread_sem;
-	struct k_sem tx_thread_sem;
 	enum eth_mcux_phy_state phy_state;
 	bool enabled;
 	bool link_up;
@@ -213,7 +228,6 @@ struct eth_context {
 
 	K_KERNEL_STACK_MEMBER(rx_thread_stack, ETH_MCUX_RX_THREAD_STACK_SIZE);
 	struct k_thread rx_thread;
-
 	K_KERNEL_STACK_MEMBER(tx_thread_stack, ETH_MCUX_TX_THREAD_STACK_SIZE);
 	struct k_thread tx_thread;
 
@@ -746,8 +760,14 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	} else
 #endif
 	{
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_SEND_FRAME_EVENT, total_len);
+#endif
 		status = ENET_SendFrame(context->base, &context->enet_handle,
 					context->tx_frame_buf, total_len, RING_ID, false, NULL);
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_SEND_FRAME_EVENT, status);
+#endif
 	}
 
 	if (status) {
@@ -828,6 +848,9 @@ static int eth_rx(struct eth_context *context)
 	enet_ptp_time_t ptpTimeData;
 #endif
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_READ_FRAME_EVENT);
+#endif
 	status = ENET_GetRxFrame(context->base, &context->enet_handle,
 		&rx_frame, RING_ID);
 	if (status == kStatus_ENET_RxFrameEmpty) {
@@ -841,19 +864,27 @@ static int eth_rx(struct eth_context *context)
 	}
 
 	frame_length = rx_frame.totLen;
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_READ_FRAME_EVENT, frame_length);
+#endif
 
 	if (frame_length > NET_ETH_MAX_FRAME_SIZE) {
 		LOG_ERR("frame too large (%d)", frame_length);
-		goto flush;
+		goto error;
 	}
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_SLAB_ALLOC_EVENT);
+#endif
 	/* Using root iface. It will be updated in net_recv_data() */
 	pkt = net_pkt_rx_alloc_with_buffer(context->iface, frame_length,
 					   AF_UNSPEC, 0, K_MSEC(100));
-
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_SLAB_ALLOC_EVENT, (uint32_t)pkt);
+#endif
 	if (!pkt) {
 		LOG_ERR("Could not allocate RX packet");
-		goto flush;
+		goto error;
 	}
 
 	if (net_pkt_write(pkt, rx_frame.rxBuffArray[0].buffer, frame_length)) {
@@ -926,15 +957,8 @@ static int eth_rx(struct eth_context *context)
 	}
 
 	return 1;
-flush:
-	/* Flush the current read buffer.  This operation can
-	 * only report failure if there is no frame to flush,
-	 * which cannot happen in this context.
-	 */
-	status = ENET_ReadFrame(context->base, &context->enet_handle, NULL,
-					0, RING_ID, NULL);
-	__ASSERT_NO_MSG(status == kStatus_Success);
 error:
+	eth_mcux_rx_free(context->base, rx_frame.rxBuffArray[0].buffer, context, RING_ID);
 	eth_stats_update_errors_rx(get_iface(context, vlan_tag));
 	return -EIO;
 }
@@ -985,15 +1009,12 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 		k_sem_give(&context->rx_thread_sem);
 		break;
 	case kENET_TxEvent:
-		if (!k_is_in_isr()) {
 #if defined(CONFIG_PTP_CLOCK_MCUX) && defined(CONFIG_NET_L2_PTP)
-			/* Register event */
-			ts_register_tx_event(context, frameinfo);
+		/* Register event */
+		ts_register_tx_event(context, frameinfo);
 #endif /* CONFIG_PTP_CLOCK_MCUX && CONFIG_NET_L2_PTP */
-
-			/* Free the TX buffer. */
-			k_sem_give(&context->tx_buf_sem);
-		}
+		/* Free the TX buffer. */
+		k_sem_give(&context->tx_int_sem);
 		break;
 	case kENET_ErrEvent:
 		/* Error event: BABR/BABT/EBERR/LC/RL/UN/PLR.  */
@@ -1012,52 +1033,44 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 	}
 }
 
-static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
-{
-	struct eth_context *context = (struct eth_context *)arg1;
-	int ret;
-
-	while (1) {
-		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
-			/* disable the IRQ for RX */
-			ENET_DisableInterrupts(context->base, kENET_RxFrameInterrupt);
-			do {
-				gpio_pin_set_dt(&context->trace_gpios[0], 1);
-				ret = eth_rx(context);
-				gpio_pin_set_dt(&context->trace_gpios[0], 0);
-			} while (ret == 1);
-			/* enable the IRQ for RX */
-			ENET_EnableInterrupts(context->base, kENET_RxFrameInterrupt);
-		}
-	}
-}
 
 static void eth_tx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
+	while (1) {
+		if (k_sem_take(&context->tx_int_sem, K_FOREVER) == 0) {
+			k_sem_give(&context->tx_buf_sem);
+		}
+	}
+}
+
+static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
+{
+	struct eth_context *context = (struct eth_context *)arg1;
+	int ret;
+	int num_rx;
 
 	while (1) {
-		if (k_sem_take(&context->tx_thread_sem, K_FOREVER) == 0) {
-			if (context->enet_handle.txReclaimEnable[RING_ID]) {
-				ENET_ReclaimTxDescriptor(context->base,
-					&context->enet_handle, RING_ID);
-			} else {
-				enet_handle_t *handle = &context->enet_handle;
-
-				if (handle->callback != NULL) {
-#if FSL_FEATURE_ENET_QUEUE > 1
-					handle->callback(context->base,
-						handle, 0, kENET_TxEvent,
-						NULL, handle->userData);
-#else
-					handle->callback(context->base,
-						handle, kENET_TxEvent,
-						NULL, handle->userData);
+		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
+			/* disable the IRQ for RX */
+			num_rx = 0;
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+			SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_RX_THREAD_EVENT);
 #endif
+			ENET_DisableInterrupts(context->base, kENET_RxFrameInterrupt);
+			do {
+				gpio_pin_set_dt(&context->trace_gpios[0], 1);
+				ret = eth_rx(context);
+				if (ret == 1) {
+					num_rx++;
 				}
-			}
-			ENET_EnableInterrupts(context->base,
-			  kENET_TxBufferInterrupt | kENET_TxFrameInterrupt);
+				gpio_pin_set_dt(&context->trace_gpios[0], 0);
+			} while (ret == 1);
+			/* enable the IRQ for RX */
+			ENET_EnableInterrupts(context->base, kENET_RxFrameInterrupt);
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+			SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_RX_THREAD_EVENT, num_rx);
+#endif
 		}
 	}
 }
@@ -1233,9 +1246,8 @@ static int eth_init(const struct device *dev)
 	k_mutex_init(&context->tx_frame_buf_mutex);
 
 	k_sem_init(&context->rx_thread_sem, 0, ETH_MCUX_HAL_RX_BUFFERS);
-	k_sem_init(&context->tx_thread_sem, 0, CONFIG_ETH_MCUX_TX_BUFFERS);
-	k_sem_init(&context->tx_buf_sem,
-		   0, CONFIG_ETH_MCUX_TX_BUFFERS);
+	k_sem_init(&context->tx_buf_sem, 0, CONFIG_ETH_MCUX_TX_BUFFERS);
+	k_sem_init(&context->tx_int_sem, 0, CONFIG_ETH_MCUX_TX_BUFFERS);
 	k_work_init(&context->phy_work, eth_mcux_phy_work);
 	k_work_init_delayable(&context->delayed_phy_work,
 			      eth_mcux_delayed_phy_work);
@@ -1257,6 +1269,9 @@ static int eth_init(const struct device *dev)
 	if (context->generate_mac) {
 		context->generate_mac(context->mac_addr);
 	}
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RegisterModule(&enet_module);
+#endif
 
 	eth_mcux_init(dev);
 
@@ -1431,10 +1446,11 @@ static void eth_mcux_common_isr(const struct device *dev)
 
 	if (EIR & kENET_TxFrameInterrupt) {
 		context->tx_irq_num++;
-		ENET_ClearInterruptStatus(context->base, kENET_TxFrameInterrupt);
-		ENET_DisableInterrupts(context->base, kENET_TxFrameInterrupt);
-		/* schedule tx thread back */
-		k_sem_give(&context->tx_thread_sem);
+#if FSL_FEATURE_ENET_QUEUE > 1
+		ENET_TransmitIRQHandler(context->base, &context->enet_handle, 0);
+#else
+		ENET_TransmitIRQHandler(context->base, &context->enet_handle);
+#endif
 	}
 
 	if (EIR | kENET_TxBufferInterrupt) {
@@ -1474,11 +1490,8 @@ static void eth_mcux_rx_isr(const struct device *dev)
 static void eth_mcux_tx_isr(const struct device *dev)
 {
 	struct eth_context *context = dev->data;
+	ENET_TransmitIRQHandler(context->base, &context->enet_handle);
 
-	ENET_DisableInterrupts(context->base, kENET_TxBufferInterrupt | kENET_TxFrameInterrupt);
-	ENET_ClearInterruptStatus(context->base, kENET_TxBufferInterrupt | kENET_TxFrameInterrupt);
-	/* schedule tx thread back */
-	k_sem_give(&context->tx_thread_sem);
 }
 #endif
 
@@ -1661,13 +1674,15 @@ static void eth_mcux_err_isr(const struct device *dev)
 		  .mdioHandle = &eth##n##_mdio_handle,			\
 		};							\
 									\
-	static NOCACHE __aligned(ENET_BUFF_ALIGNMENT)			\
+	static __aligned(ENET_BUFF_ALIGNMENT)				\
 		enet_rx_bd_struct_t					\
-		eth##n##_rx_buffer_desc[ETH_MCUX_HAL_RX_BUFFERS];	\
+		eth##n##_rx_buffer_desc[ETH_MCUX_HAL_RX_BUFFERS]	\
+			__dtcm_bss_section;				\
 									\
-	static NOCACHE __aligned(ENET_BUFF_ALIGNMENT)			\
+	static __aligned(ENET_BUFF_ALIGNMENT)				\
 		enet_tx_bd_struct_t					\
-		eth##n##_tx_buffer_desc[CONFIG_ETH_MCUX_TX_BUFFERS];	\
+		eth##n##_tx_buffer_desc[CONFIG_ETH_MCUX_TX_BUFFERS]	\
+			__dtcm_bss_section;				\
 									\
 	static uint8_t __aligned(ENET_BUFF_ALIGNMENT)			\
 		eth##n##_rx_buffer[CONFIG_ETH_MCUX_RX_BUFFERS]		\
