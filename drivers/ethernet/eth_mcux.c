@@ -54,6 +54,23 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <zephyr/drivers/pinctrl.h>
 #endif
 
+#if defined(CONFIG_SEGGER_SYSTEMVIEW)
+#include <SEGGER_SYSVIEW.h>
+
+SEGGER_SYSVIEW_MODULE enet_module = {
+	.sModule = "M=MCUX_ENET",
+	.NumEvents = 5,
+	.EventOffset = 0,
+};
+
+#define ETH_MCUX_READ_FRAME_EVENT (enet_module.EventOffset + 0U)
+#define ETH_MCUX_SEND_FRAME_EVENT (enet_module.EventOffset + 1U)
+#define ETH_MCUX_SLAB_ALLOC_EVENT (enet_module.EventOffset + 2U)
+#define ETH_MCUX_RX_THREAD_EVENT (enet_module.EventOffset + 3U)
+#define ETH_MCUX_ISR_EVENT (enet_module.EventOffset + 4U)
+
+#endif
+
 #include "eth.h"
 
 #define PHY_OMS_OVERRIDE_REG 0x16U      /* The PHY Operation Mode Strap Override register. */
@@ -712,6 +729,10 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 
 	k_mutex_lock(&context->tx_frame_buf_mutex, K_FOREVER);
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_SEND_FRAME_EVENT, total_len);
+#endif
+
 	if (net_pkt_read(pkt, context->tx_frame_buf, total_len)) {
 		k_mutex_unlock(&context->tx_frame_buf_mutex);
 		return -EIO;
@@ -736,6 +757,9 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 					context->tx_frame_buf, total_len, RING_ID, false, NULL);
 	}
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_SEND_FRAME_EVENT, status);
+#endif
 	if (status) {
 		LOG_ERR("ENET_SendFrame error: %d", (int)status);
 		k_mutex_unlock(&context->tx_frame_buf_mutex);
@@ -782,10 +806,17 @@ static int eth_rx(struct eth_context *context)
 		goto flush;
 	}
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_SLAB_ALLOC_EVENT);
+#endif
 	/* Using root iface. It will be updated in net_recv_data() */
 	pkt = net_pkt_rx_alloc_with_buffer(context->iface, frame_length,
 					   AF_UNSPEC, 0, K_NO_WAIT);
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_SLAB_ALLOC_EVENT, (uint32_t)pkt);
+#endif
 	if (!pkt) {
+		LOG_ERR("Failed to allocated RX packet");
 		goto flush;
 	}
 
@@ -794,8 +825,15 @@ static int eth_rx(struct eth_context *context)
 	 */
 	k_mutex_lock(&context->rx_frame_buf_mutex, K_FOREVER);
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_READ_FRAME_EVENT, frame_length);
+#endif
+
 	status = ENET_ReadFrame(context->base, &context->enet_handle,
 				context->rx_frame_buf, frame_length, RING_ID, &ts);
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_READ_FRAME_EVENT, status);
+#endif
 	if (status) {
 		LOG_ERR("ENET_ReadFrame failed: %d", (int)status);
 		net_pkt_unref(pkt);
@@ -962,12 +1000,20 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
+	int num_rx;
 
 	while (1) {
 		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
+			num_rx = 0;
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+			SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_RX_THREAD_EVENT);
+#endif
 			while (eth_rx(context) == 1) {
-				;
+				num_rx++;
 			}
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+			SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_RX_THREAD_EVENT, num_rx);
+#endif
 			/* enable the IRQ for RX */
 			ENET_EnableInterrupts(context->base,
 			  kENET_RxFrameInterrupt | kENET_RxBufferInterrupt);
@@ -1088,6 +1134,10 @@ static void eth_mcux_init(const struct device *dev)
 		  buffer_config,
 		  context->mac_addr,
 		  sys_clock);
+
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RegisterModule(&enet_module);
+#endif
 
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	ENET_AddMulticastGroup(context->base, ptp_multicast);
@@ -1340,6 +1390,11 @@ static void eth_mcux_common_isr(const struct device *dev)
 	struct eth_context *context = dev->data;
 	uint32_t EIR = ENET_GetInterruptStatus(context->base);
 	int irq_lock_key = irq_lock();
+
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_ISR_EVENT, EIR);
+#endif
+
 
 	if (EIR & (kENET_RxBufferInterrupt | kENET_RxFrameInterrupt)) {
 		/* disable the IRQ for RX */
