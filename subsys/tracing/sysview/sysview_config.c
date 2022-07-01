@@ -53,6 +53,8 @@ static void cbSendSystemDesc(void)
 	SEGGER_SYSVIEW_SendSysDesc("D=" CONFIG_BOARD " "
 				   CONFIG_SOC_SERIES " " CONFIG_ARCH);
 	SEGGER_SYSVIEW_SendSysDesc("O=Zephyr");
+	SEGGER_SYSVIEW_SendSysDesc("I#36=LPUART_ISR");
+	SEGGER_SYSVIEW_SendSysDesc("I#130=ENET_ISR");
 }
 
 static void send_task_list_cb(void)
