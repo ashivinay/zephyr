@@ -191,7 +191,9 @@ struct eth_context {
 	struct k_sem tx_buf_sem;
 	phy_handle_t *phy_handle;
 	struct k_sem rx_thread_sem;
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 	struct k_sem tx_thread_sem;
+#endif
 	enum eth_mcux_phy_state phy_state;
 	bool enabled;
 	bool link_up;
@@ -208,8 +210,10 @@ struct eth_context {
 	K_KERNEL_STACK_MEMBER(rx_thread_stack, ETH_MCUX_RX_THREAD_STACK_SIZE);
 	struct k_thread rx_thread;
 
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 	K_KERNEL_STACK_MEMBER(tx_thread_stack, ETH_MCUX_TX_THREAD_STACK_SIZE);
 	struct k_thread tx_thread;
+#endif /* CONFIG_ETH_MCUX_TX_THREAD */
 
 	/* TODO: FIXME. This Ethernet frame sized buffer is used for
 	 * interfacing with MCUX. How it works is that hardware uses
@@ -970,6 +974,7 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 		k_sem_give(&context->rx_thread_sem);
 		break;
 	case kENET_TxEvent:
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 		if (!k_is_in_isr()) {
 #if defined(CONFIG_PTP_CLOCK_MCUX) && defined(CONFIG_NET_L2_PTP)
 			/* Register event */
@@ -979,6 +984,14 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 			/* Free the TX buffer. */
 			k_sem_give(&context->tx_buf_sem);
 		}
+#else
+#if defined(CONFIG_PTP_CLOCK_MCUX) && defined(CONFIG_NET_L2_PTP)
+		/* Register event */
+		ts_register_tx_event(context, frameinfo);
+#endif /* CONFIG_PTP_CLOCK_MCUX && CONFIG_NET_L2_PTP */
+		/* Free the TX buffer. */
+		k_sem_give(&context->tx_buf_sem);
+#endif /* CONFIG_ETH_MCUX_TX_THREAD */
 		break;
 	case kENET_ErrEvent:
 		/* Error event: BABR/BABT/EBERR/LC/RL/UN/PLR.  */
@@ -1024,6 +1037,8 @@ static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 	}
 }
 
+#ifdef CONFIG_ETH_TX_THREAD
+
 static void eth_tx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
@@ -1053,6 +1068,8 @@ static void eth_tx_thread(void *arg1, void *unused1, void *unused2)
 		}
 	}
 }
+
+#endif /* CONFIG_ETH_TX_THREAD */
 
 
 #if defined(CONFIG_ETH_MCUX_PHY_RESET)
@@ -1211,7 +1228,9 @@ static int eth_init(const struct device *dev)
 	k_mutex_init(&context->tx_frame_buf_mutex);
 
 	k_sem_init(&context->rx_thread_sem, 0, CONFIG_ETH_MCUX_RX_BUFFERS);
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 	k_sem_init(&context->tx_thread_sem, 0, CONFIG_ETH_MCUX_TX_BUFFERS);
+#endif /* CONFIG_ETH_MCUX_TX_THREAD */
 	k_sem_init(&context->tx_buf_sem,
 		   0, CONFIG_ETH_MCUX_TX_BUFFERS);
 	k_work_init(&context->phy_work, eth_mcux_phy_work);
@@ -1225,12 +1244,14 @@ static int eth_init(const struct device *dev)
 			K_PRIO_COOP(2),
 			0, K_NO_WAIT);
 	k_thread_name_set(&context->rx_thread, "mcux_eth_rx");
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 	k_thread_create(&context->tx_thread, context->tx_thread_stack,
 			K_KERNEL_STACK_SIZEOF(context->tx_thread_stack),
 			eth_tx_thread, (void *) context, NULL, NULL,
 			K_PRIO_COOP(3),
 			0, K_NO_WAIT);
 	k_thread_name_set(&context->tx_thread, "mcux_eth_tx");
+#endif /* CONFIG_ETH_MCUX_TX_THREAD */
 
 	if (context->generate_mac) {
 		context->generate_mac(context->mac_addr);
@@ -1416,11 +1437,19 @@ static void eth_mcux_common_isr(const struct device *dev)
 	}
 
 	if (EIR & kENET_TxFrameInterrupt) {
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 		context->tx_irq_num++;
 		ENET_ClearInterruptStatus(context->base, kENET_TxFrameInterrupt);
 		ENET_DisableInterrupts(context->base, kENET_TxFrameInterrupt);
 		/* schedule tx thread back */
 		k_sem_give(&context->tx_thread_sem);
+#else
+#if FSL_FEATURE_ENET_QUEUE > 1
+		ENET_TransmitIRQHandler(context->base, &context->enet_handle, 0);
+#else
+		ENET_TransmitIRQHandler(context->base, &context->enet_handle);
+#endif
+#endif /* CONFIG_ETH_MCUX_TX_THREAD */
 	}
 
 	if (EIR | kENET_TxBufferInterrupt) {
@@ -1460,12 +1489,20 @@ static void eth_mcux_rx_isr(const struct device *dev)
 #if DT_INST_IRQ_HAS_NAME(0, tx) || DT_INST_IRQ_HAS_NAME(1, tx)
 static void eth_mcux_tx_isr(const struct device *dev)
 {
+#ifdef CONFIG_ETH_MCUX_TX_THREAD
 	struct eth_context *context = dev->data;
 
 	ENET_DisableInterrupts(context->base, kENET_TxBufferInterrupt | kENET_TxFrameInterrupt);
 	ENET_ClearInterruptStatus(context->base, kENET_TxBufferInterrupt | kENET_TxFrameInterrupt);
 	/* schedule tx thread back */
 	k_sem_give(&context->tx_thread_sem);
+#else
+#if FSL_FEATURE_ENET_QUEUE > 1
+	ENET_TransmitIRQHandler(context->base, &context->enet_handle, 0);
+#else
+	ENET_TransmitIRQHandler(context->base, &context->enet_handle);
+#endif
+#endif /* CONFIG_ETH_MCUX_TX_THREAD */
 }
 #endif
 
