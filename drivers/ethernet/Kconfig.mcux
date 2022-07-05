@@ -50,7 +50,7 @@ config ETH_MCUX_PHY_EXTRA_DEBUG
 
 config ETH_MCUX_RX_BUFFERS
 	int "Number of MCUX RX buffers"
-	default 6
+	default 8
 	range 6 16
 	help
 	  Set the number of RX buffers provided to the MCUX driver.
@@ -73,6 +73,11 @@ config ETH_MCUX_HW_ACCELERATION
 	help
 	  Enable hardware acceleration for the following:
 	  - IPv4, UDP and TCP checksum (both Rx and Tx)
+
+config ETH_MCUX_TX_THREAD
+	bool "Enable Ethernet TX thread"
+	help
+	   Enable ethernet TX thread, to reclaim unused frames
 
 config PTP_CLOCK_MCUX
 	bool "MCUX PTP clock driver support"
