@@ -369,4 +369,5 @@ void zperf_tcp_receiver_init(const struct shell *sh, int port)
 			IS_ENABLED(CONFIG_USERSPACE) ? K_USER |
 						       K_INHERIT_PERMS : 0,
 			K_NO_WAIT);
+	k_thread_name_set(&tcp_receiver_thread_data, "zperf_tcp_rx_thread");
 }
