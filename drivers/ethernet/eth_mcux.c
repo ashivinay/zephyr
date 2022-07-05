@@ -816,7 +816,7 @@ static int eth_rx(struct eth_context *context)
 	SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_SLAB_ALLOC_EVENT, (uint32_t)pkt);
 #endif
 	if (!pkt) {
-		LOG_ERR("Failed to allocated RX packet");
+		LOG_ERR("Failed to allocate RX packet");
 		goto flush;
 	}
 
@@ -1000,7 +1000,7 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 {
 	struct eth_context *context = (struct eth_context *)arg1;
-	int num_rx;
+	int num_rx, ret;
 
 	while (1) {
 		if (k_sem_take(&context->rx_thread_sem, K_FOREVER) == 0) {
@@ -1008,8 +1008,11 @@ static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
 			SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_RX_THREAD_EVENT);
 #endif
-			while (eth_rx(context) == 1) {
+			while ((ret = eth_rx(context)) == 1) {
 				num_rx++;
+			}
+			if (ret) {
+				LOG_ERR("ETH_RX Failed with error %d after %d reads", ret, num_rx);
 			}
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
 			SEGGER_SYSVIEW_RecordEndCallU32(ETH_MCUX_RX_THREAD_EVENT, num_rx);
@@ -1102,6 +1105,9 @@ static void eth_mcux_init(const struct device *dev)
 #else
 	sys_clock = CLOCK_GetFreq(kCLOCK_CoreSysClk);
 #endif
+
+	memset((void *)buffer_config->rxBdStartAddrAlign, 0, sizeof(enet_rx_bd_struct_t));
+	memset((void *)buffer_config->txBdStartAddrAlign, 0, sizeof(enet_tx_bd_struct_t));
 
 	ENET_GetDefaultConfig(&enet_config);
 	enet_config.interrupt |= kENET_RxFrameInterrupt;
