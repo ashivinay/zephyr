@@ -1638,9 +1638,11 @@ static void eth_mcux_err_isr(const struct device *dev)
 									\
 	static void eth##n##_config_func(void);				\
 	static uint8_t							\
-		tx_enet_frame_##n##_buf[NET_ETH_MAX_FRAME_SIZE];	\
+		tx_enet_frame_##n##_buf[NET_ETH_MAX_FRAME_SIZE]		\
+				  __dtcm_noinit_section;		\
 	static uint8_t							\
-		rx_enet_frame_##n##_buf[NET_ETH_MAX_FRAME_SIZE];	\
+		rx_enet_frame_##n##_buf[NET_ETH_MAX_FRAME_SIZE]		\
+				  __dtcm_noinit_section;		\
 									\
 	static mdio_handle_t eth##n##_mdio_handle = {			\
 		  .resource.base = (ENET_Type *)DT_INST_REG_ADDR(n),	\
@@ -1665,21 +1667,25 @@ static void eth_mcux_err_isr(const struct device *dev)
 		ETH_MCUX_POWER(n)					\
 	};								\
 									\
-	static NOCACHE __aligned(ENET_BUFF_ALIGNMENT)			\
+	static __aligned(ENET_BUFF_ALIGNMENT)				\
 		enet_rx_bd_struct_t					\
-		eth##n##_rx_buffer_desc[CONFIG_ETH_MCUX_RX_BUFFERS];	\
+		eth##n##_rx_buffer_desc[CONFIG_ETH_MCUX_RX_BUFFERS]	\
+				__dtcm_bss_section;			\
 									\
-	static NOCACHE __aligned(ENET_BUFF_ALIGNMENT)			\
+	static __aligned(ENET_BUFF_ALIGNMENT)				\
 		enet_tx_bd_struct_t					\
-		eth##n##_tx_buffer_desc[CONFIG_ETH_MCUX_TX_BUFFERS];	\
+		eth##n##_tx_buffer_desc[CONFIG_ETH_MCUX_TX_BUFFERS]	\
+				__dtcm_bss_section;			\
 									\
 	static uint8_t __aligned(ENET_BUFF_ALIGNMENT)			\
 		eth##n##_rx_buffer[CONFIG_ETH_MCUX_RX_BUFFERS]		\
-				  [ETH_MCUX_BUFFER_SIZE];		\
+				  [ETH_MCUX_BUFFER_SIZE]		\
+				  __dtcm_noinit_section;		\
 									\
 	static uint8_t __aligned(ENET_BUFF_ALIGNMENT)			\
 		eth##n##_tx_buffer[CONFIG_ETH_MCUX_TX_BUFFERS]		\
-				  [ETH_MCUX_BUFFER_SIZE];		\
+				  [ETH_MCUX_BUFFER_SIZE]		\
+				  __dtcm_noinit_section;		\
 									\
 	ETH_MCUX_PTP_FRAMEINFO_ARRAY(n)					\
 									\
