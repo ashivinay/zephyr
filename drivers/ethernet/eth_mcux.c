@@ -1176,8 +1176,8 @@ static void eth_mcux_init(const struct device *dev)
 	}
 
 	ENET_GetDefaultConfig(&enet_config);
-	enet_config.interrupt |= kENET_RxFrameInterrupt;
-	enet_config.interrupt |= kENET_TxFrameInterrupt;
+	enet_config.interrupt |= (kENET_RxFrameInterrupt | kENET_LateCollisionInterrupt);
+	enet_config.interrupt |= (kENET_TxFrameInterrupt | kENET_TxBufferInterrupt);
 #if !defined(CONFIG_ETH_MCUX_NO_PHY_SMI)
 	enet_config.interrupt |= kENET_MiiInterrupt;
 #endif
@@ -1468,7 +1468,6 @@ static void eth_mcux_common_isr(const struct device *dev)
 {
 	struct eth_context *context = dev->data;
 	uint32_t EIR = ENET_GetInterruptStatus(context->base);
-	int irq_lock_key = irq_lock();
 
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
 	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_ISR_EVENT, EIR);
@@ -1502,11 +1501,6 @@ static void eth_mcux_common_isr(const struct device *dev)
 #endif /* CONFIG_ETH_MCUX_TX_THREAD */
 	}
 
-	if (EIR | kENET_TxBufferInterrupt) {
-		ENET_ClearInterruptStatus(context->base, kENET_TxBufferInterrupt);
-		ENET_DisableInterrupts(context->base, kENET_TxBufferInterrupt);
-	}
-
 	if (EIR & ENET_EIR_MII_MASK) {
 		k_work_submit(&context->phy_work);
 		ENET_ClearInterruptStatus(context->base, kENET_MiiInterrupt);
@@ -1516,13 +1510,6 @@ static void eth_mcux_common_isr(const struct device *dev)
 		ENET_TimeStampIRQHandler(context->base, &context->enet_handle);
 	}
 #endif
-	if (EIR) {
-		ENET_ClearInterruptStatus(context->base,
-		  ~(kENET_TxBufferInterrupt | kENET_TxFrameInterrupt
-		    | kENET_RxBufferInterrupt | kENET_RxFrameInterrupt
-		    | ENET_EIR_MII_MASK | ENET_TS_INTERRUPT));
-	}
-	irq_unlock(irq_lock_key);
 }
 #endif
 
