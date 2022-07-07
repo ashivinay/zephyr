@@ -53,7 +53,7 @@
 
 			itcm: itcm@0 {
 				compatible = "zephyr,memory-region", "nxp,imx-itcm";
-				reg = <0x00000000 DT_SIZE_K(128)>;
+				reg = <0x00000000 DT_SIZE_K(256)>;
 				zephyr,memory-region = "ITCM";
 			};
 
@@ -65,7 +65,7 @@
 
 			ocram: ocram@20200000 {
 				compatible = "mmio-sram";
-				reg = <0x20200000 DT_SIZE_K(256)>;
+				reg = <0x20200000 DT_SIZE_K(128)>;
 			};
 		};
 
