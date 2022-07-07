@@ -3,6 +3,7 @@
  *  Copyright (c) 2016-2017 ARM Ltd
  *  Copyright (c) 2016 Linaro Ltd
  *  Copyright (c) 2018 Intel Corporation
+ *  Copyright 2022 NXP
  *
  * SPDX-License-Identifier: Apache-2.0
  */
