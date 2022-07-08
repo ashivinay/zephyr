@@ -27,7 +27,12 @@ static const struct arm_mpu_region mpu_regions[] = {
 			 REGION_RAM_ATTR(CONFIG_SRAM_BASE_ADDRESS, \
 				 CONFIG_SRAM_SIZE * 1024)),
 #else
-			 REGION_RAM_ATTR(REGION_SRAM_SIZE)),
+#if defined(CONFIG_XIP)
+			 REGION_RAM_ATTR(REGION_SRAM_SIZE)
+#else
+			 REGION_RAM_XIP_ATTR(REGION_SRAM_SIZE)
+#endif
+			 ),
 #endif
 
 	/* DT-defined regions */
