@@ -327,7 +327,7 @@ void z_arm_platform_init(void)
 	IOMUXC_GPR->GPR17 = 0x5AFFFFA5;
 	IOMUXC_GPR->GPR14 = (IOMUXC_GPR->GPR14 & ~0xFF0000) | 0x890000;
 	IOMUXC_GPR->GPR16 |=  0x4;
-#endif CONFIG_CODE_ITCM
+#endif
 }
 #endif
 
