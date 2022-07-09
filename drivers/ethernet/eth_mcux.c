@@ -743,6 +743,9 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	bool timestamped_frame;
 #endif
 
+	/* Wait until a buffer is available to transmit with */
+	k_sem_take(&context->tx_buf_sem, K_FOREVER);
+
 	k_mutex_lock(&context->tx_frame_buf_mutex, K_FOREVER);
 
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
@@ -785,7 +788,6 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	}
 
 	k_mutex_unlock(&context->tx_frame_buf_mutex);
-	k_sem_take(&context->tx_buf_sem, K_FOREVER);
 
 	return 0;
 }
@@ -1284,8 +1286,9 @@ static int eth_init(const struct device *dev)
 #ifdef CONFIG_ETH_MCUX_TX_THREAD
 	k_sem_init(&context->tx_thread_sem, 0, CONFIG_ETH_MCUX_TX_BUFFERS);
 #endif /* CONFIG_ETH_MCUX_TX_THREAD */
+	/* Note: init tx_buf_sem at max value, as all buffers are free */
 	k_sem_init(&context->tx_buf_sem,
-		   0, CONFIG_ETH_MCUX_TX_BUFFERS);
+		CONFIG_ETH_MCUX_TX_BUFFERS, CONFIG_ETH_MCUX_TX_BUFFERS);
 	k_work_init(&context->phy_work, eth_mcux_phy_work);
 	k_work_init_delayable(&context->delayed_phy_work,
 			      eth_mcux_delayed_phy_work);
