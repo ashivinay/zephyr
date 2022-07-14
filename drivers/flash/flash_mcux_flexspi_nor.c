@@ -172,10 +172,9 @@ static int flash_flexspi_nor_get_vendor_id(const struct device *dev,
 	return ret;
 }
 
-static int flash_flexspi_nor_read_status(const struct device *dev,
+static int flash_flexspi_nor_read_status(struct flash_flexspi_nor_data *data,
 		uint32_t *status)
 {
-	struct flash_flexspi_nor_data *data = dev->data;
 
 	flexspi_transfer_t transfer = {
 		.deviceAddress = 0,
@@ -212,9 +211,8 @@ static int flash_flexspi_nor_write_status(const struct device *dev,
 	return memc_flexspi_transfer(data->controller, &transfer);
 }
 
-static int flash_flexspi_nor_write_enable(const struct device *dev)
+static int flash_flexspi_nor_write_enable(struct flash_flexspi_nor_data *data)
 {
-	struct flash_flexspi_nor_data *data = dev->data;
 
 	flexspi_transfer_t transfer = {
 		.deviceAddress = 0,
@@ -231,11 +229,9 @@ static int flash_flexspi_nor_write_enable(const struct device *dev)
 	return memc_flexspi_transfer(data->controller, &transfer);
 }
 
-static int flash_flexspi_nor_erase_sector(const struct device *dev,
+static int flash_flexspi_nor_erase_sector(struct flash_flexspi_nor_data *data,
 	off_t offset)
 {
-	struct flash_flexspi_nor_data *data = dev->data;
-
 	flexspi_transfer_t transfer = {
 		.deviceAddress = offset,
 		.port = data->port,
@@ -251,10 +247,8 @@ static int flash_flexspi_nor_erase_sector(const struct device *dev,
 	return memc_flexspi_transfer(data->controller, &transfer);
 }
 
-static int flash_flexspi_nor_erase_chip(const struct device *dev)
+static int flash_flexspi_nor_erase_chip(struct flash_flexspi_nor_data *data)
 {
-	struct flash_flexspi_nor_data *data = dev->data;
-
 	flexspi_transfer_t transfer = {
 		.deviceAddress = 0,
 		.port = data->port,
@@ -270,10 +264,9 @@ static int flash_flexspi_nor_erase_chip(const struct device *dev)
 	return memc_flexspi_transfer(data->controller, &transfer);
 }
 
-static int flash_flexspi_nor_page_program(const struct device *dev,
+static int flash_flexspi_nor_page_program(struct flash_flexspi_nor_data *data,
 		off_t offset, const void *buffer, size_t len)
 {
-	struct flash_flexspi_nor_data *data = dev->data;
 
 	flexspi_transfer_t transfer = {
 		.deviceAddress = offset,
@@ -290,13 +283,13 @@ static int flash_flexspi_nor_page_program(const struct device *dev,
 	return memc_flexspi_transfer(data->controller, &transfer);
 }
 
-static int flash_flexspi_nor_wait_bus_busy(const struct device *dev)
+static int flash_flexspi_nor_wait_bus_busy(struct flash_flexspi_nor_data *data)
 {
 	uint32_t status = 0;
 	int ret;
 
 	do {
-		ret = flash_flexspi_nor_read_status(dev, &status);
+		ret = flash_flexspi_nor_read_status(data, &status);
 		LOG_DBG("status: 0x%x", status);
 		if (ret) {
 			LOG_ERR("Could not read status");
@@ -313,7 +306,7 @@ static int flash_flexspi_nor_enable_quad_mode(const struct device *dev)
 	uint32_t status = 0x40;
 
 	flash_flexspi_nor_write_status(dev, &status);
-	flash_flexspi_nor_wait_bus_busy(dev);
+	flash_flexspi_nor_wait_bus_busy(data);
 	memc_flexspi_reset(data->controller);
 
 	return 0;
@@ -363,13 +356,13 @@ static int flash_flexspi_nor_write(const struct device *dev, off_t offset,
 #ifdef CONFIG_FLASH_MCUX_FLEXSPI_NOR_WRITE_BUFFER
 		memcpy(nor_write_buf, src, i);
 #endif
-		flash_flexspi_nor_write_enable(dev);
+		flash_flexspi_nor_write_enable(data);
 #ifdef CONFIG_FLASH_MCUX_FLEXSPI_NOR_WRITE_BUFFER
-		flash_flexspi_nor_page_program(dev, offset, nor_write_buf, i);
+		flash_flexspi_nor_page_program(data, offset, nor_write_buf, i);
 #else
-		flash_flexspi_nor_page_program(dev, offset, src, i);
+		flash_flexspi_nor_page_program(data, offset, src, i);
 #endif
-		flash_flexspi_nor_wait_bus_busy(dev);
+		flash_flexspi_nor_wait_bus_busy(data);
 		memc_flexspi_reset(data->controller);
 		src += i;
 		offset += i;
@@ -420,15 +413,15 @@ static int flash_flexspi_nor_erase(const struct device *dev, off_t offset,
 	}
 
 	if ((offset == 0) && (size == data->config.flashSize * KB(1))) {
-		flash_flexspi_nor_write_enable(dev);
-		flash_flexspi_nor_erase_chip(dev);
-		flash_flexspi_nor_wait_bus_busy(dev);
+		flash_flexspi_nor_write_enable(data);
+		flash_flexspi_nor_erase_chip(data);
+		flash_flexspi_nor_wait_bus_busy(data);
 		memc_flexspi_reset(data->controller);
 	} else {
 		for (i = 0; i < num_sectors; i++) {
-			flash_flexspi_nor_write_enable(dev);
-			flash_flexspi_nor_erase_sector(dev, offset);
-			flash_flexspi_nor_wait_bus_busy(dev);
+			flash_flexspi_nor_write_enable(data);
+			flash_flexspi_nor_erase_sector(data, offset);
+			flash_flexspi_nor_wait_bus_busy(data);
 			memc_flexspi_reset(data->controller);
 			offset += SPI_NOR_SECTOR_SIZE;
 		}
