@@ -30,6 +30,7 @@ LOG_MODULE_REGISTER(net_core, CONFIG_NET_CORE_LOG_LEVEL);
 #include <zephyr/net/websocket.h>
 #include <zephyr/net/ethernet.h>
 #include <zephyr/net/capture.h>
+#include <zephyr/drivers/gpio.h>
 
 #if defined(CONFIG_NET_LLDP)
 #include <zephyr/net/lldp.h>
@@ -363,6 +364,11 @@ static void net_rx(struct net_if *iface, struct net_pkt *pkt)
 	bool is_loopback = false;
 	size_t pkt_len;
 
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+	gpio_pin_set(gpio_1, 20, 1);
+#endif
+
 	pkt_len = net_pkt_get_len(pkt);
 
 	NET_DBG("Received pkt %p len %zu", pkt, pkt_len);
@@ -378,6 +384,10 @@ static void net_rx(struct net_if *iface, struct net_pkt *pkt)
 	}
 
 	processing_data(pkt, is_loopback);
+
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	gpio_pin_set(gpio_1, 20, 0);
+#endif
 
 	net_print_statistics();
 	net_pkt_print();
@@ -469,6 +479,11 @@ static inline void l3_init(void)
 	net_tcp_init();
 
 	net_route_init();
+
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+	gpio_pin_configure(gpio_1, 20, GPIO_ACTIVE_HIGH | GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+#endif
 
 	NET_DBG("Network L3 init done");
 }

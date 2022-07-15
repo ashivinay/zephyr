@@ -868,6 +868,10 @@ static int eth_rx(struct eth_context *context)
 	}
 
 	frame_length = rx_frame.totLen;
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+	gpio_pin_set(gpio_1, 27, 1);
+#endif
 
 	if (frame_length > NET_ETH_MAX_FRAME_SIZE) {
 		LOG_ERR("frame too large (%d)", frame_length);
@@ -962,6 +966,9 @@ static int eth_rx(struct eth_context *context)
 		net_pkt_unref(pkt);
 		goto error;
 	}
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	gpio_pin_set(gpio_1, 27, 0);
+#endif
 
 	return 1;
 flush:
@@ -1017,9 +1024,15 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 			 enet_event_t event, enet_frame_info_t *frameinfo, void *param)
 {
 	struct eth_context *context = param;
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+#endif
 
 	switch (event) {
 	case kENET_RxEvent:
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+		gpio_pin_set(gpio_1, 26, 0);
+#endif
 		k_sem_give(&context->rx_thread_sem);
 		break;
 	case kENET_TxEvent:
@@ -1070,6 +1083,7 @@ static void eth_rx_thread(void *arg1, void *unused1, void *unused2)
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
 			SEGGER_SYSVIEW_RecordVoid(ETH_MCUX_RX_THREAD_EVENT);
 #endif
+
 			while ((ret = eth_rx(context)) == 1) {
 				num_rx++;
 			}
@@ -1161,6 +1175,12 @@ static void eth_mcux_init(const struct device *dev)
 	context->phy_state = eth_mcux_phy_state_initial;
 	context->phy_handle->mdioHandle->ops = &enet_ops;
 	context->phy_handle->ops = &phyksz8081_ops;
+
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+	gpio_pin_configure(gpio_1, 26, GPIO_ACTIVE_HIGH | GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+	gpio_pin_configure(gpio_1, 27, GPIO_ACTIVE_HIGH | GPIO_OUTPUT_INACTIVE | GPIO_PULL_DOWN);
+#endif
 
 #if defined(CONFIG_SOC_SERIES_IMX_RT10XX)
 	sys_clock = CLOCK_GetFreq(kCLOCK_IpgClk);
@@ -1480,6 +1500,10 @@ static void eth_mcux_common_isr(const struct device *dev)
 
 	if (EIR & (kENET_RxBufferInterrupt | kENET_RxFrameInterrupt)) {
 		/* disable the IRQ for RX */
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+		const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+		gpio_pin_set(gpio_1, 26, 1);
+#endif
 		context->rx_irq_num++;
 #if FSL_FEATURE_ENET_QUEUE > 1
 		/* Only use ring 0 in this driver */

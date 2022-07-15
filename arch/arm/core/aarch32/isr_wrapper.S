@@ -290,6 +290,21 @@ spurious_continue:
 #error Unknown ARM architecture
 #endif /* CONFIG_ARMV6_M_ARMV8_M_BASELINE */
 
+
+#if defined(CONFIG_ETH_MCUX_TRACE_GPIOS)
+	.equ GPIO1_DR, 0x401B8000
+	.equ GPIO1_CLEAR, 0x401B8088
+	mov r2, 0x20000
+	ldr r3, =GPIO1_DR
+	ldr r1, [r3]
+	tst r1, r2
+	ittt ne
+		/* Record idle exit via GPIO */
+		ldrne r3, =GPIO1_CLEAR
+		movne r2, 0x20000
+		strne r2, [r3]
+#endif
+
 	/* Use 'bx' instead of 'b' because 'bx' can jump further, and use
 	 * 'bx' instead of 'blx' because exception return is done in
 	 * z_arm_int_exit() */

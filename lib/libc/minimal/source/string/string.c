@@ -9,6 +9,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <zephyr/device.h>
+#include <fsl_iomuxc.h>
 
 /**
  *
@@ -302,6 +304,10 @@ void *memcpy(void *ZRESTRICT d, const void *ZRESTRICT s, size_t n)
 	unsigned char *d_byte = (unsigned char *)d;
 	const unsigned char *s_byte = (const unsigned char *)s;
 
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	GPIO1->DR_SET = BIT(21);
+#endif
+
 #if !defined(CONFIG_MINIMAL_LIBC_OPTIMIZE_STRING_FOR_SIZE)
 	const uintptr_t mask = sizeof(mem_word_t) - 1;
 
@@ -339,7 +345,11 @@ void *memcpy(void *ZRESTRICT d, const void *ZRESTRICT s, size_t n)
 		n--;
 	}
 
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	GPIO1->DR_CLEAR = BIT(21);
+#endif
 	return d;
+
 }
 
 /**
@@ -416,3 +426,21 @@ void *memchr(const void *s, int c, size_t n)
 
 	return NULL;
 }
+
+
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+
+static int init_gpios(const struct device *unused) {
+	IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_05_GPIO1_IO21, 0U);
+	IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_05_GPIO1_IO21,
+		IOMUXC_SW_PAD_CTL_PAD_PKE_MASK |
+		IOMUXC_SW_PAD_CTL_PAD_PUE(1) |
+		IOMUXC_SW_PAD_CTL_PAD_PUS(0) |
+		IOMUXC_SW_PAD_CTL_PAD_DSE(6));
+	GPIO1->GDIR |= BIT(21);
+	GPIO1->DR_CLEAR = BIT(21);
+	return 0;
+}
+
+SYS_INIT(init_gpios, POST_KERNEL, 0);
+#endif

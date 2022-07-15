@@ -14,6 +14,8 @@
 #include <zephyr/logging/log.h>
 #include <ksched.h>
 #include <kswap.h>
+#include <fsl_iomuxc.h>
+#include <fsl_gpio.h>
 
 LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
@@ -38,6 +40,17 @@ void idle(void *unused1, void *unused2, void *unused3)
 
 	__ASSERT_NO_MSG(_current->base.prio >= 0);
 
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+	IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B1_01_GPIO1_IO17, 0U);
+	IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B1_01_GPIO1_IO17,
+		IOMUXC_SW_PAD_CTL_PAD_PKE_MASK |
+		IOMUXC_SW_PAD_CTL_PAD_PUE(1) |
+		IOMUXC_SW_PAD_CTL_PAD_PUS(0) |
+		IOMUXC_SW_PAD_CTL_PAD_DSE(6));
+	GPIO1->GDIR |= BIT(17);
+	GPIO1->DR_CLEAR = BIT(17);
+#endif
+
 	while (true) {
 		/* SMP systems without a working IPI can't
 		 * actual enter an idle state, because they
@@ -61,6 +74,9 @@ void idle(void *unused1, void *unused2, void *unused3)
 		 */
 		(void) arch_irq_lock();
 
+#ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
+		GPIO1->DR_SET = BIT(17);
+#endif
 #ifdef CONFIG_PM
 		_kernel.idle = z_get_next_timeout_expiry();
 

@@ -42,6 +42,11 @@ config ETH_MCUX_PHY_TICK_MS
 	help
 	  Set the PHY status polling period.
 
+config ETH_MCUX_TRACE_GPIOS
+	bool "enable ethernet tracing GPIOs"
+	help
+	  Enable GPIO outputs for ethernet tracing
+
 config ETH_MCUX_PHY_EXTRA_DEBUG
 	bool "Additional detailed PHY debug"
 	help
