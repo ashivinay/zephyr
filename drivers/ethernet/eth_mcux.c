@@ -192,6 +192,12 @@ struct rx_buf_data {
 	bool in_use; /* Is this buffer in use by the driver? */
 };
 
+struct eth_tx_bd_context {
+	struct net_pkt *pkt; /* TX buffer descriptor packet ref */
+	struct net_buf *frag; /* TX buffer fragment */
+	struct eth_tx_bd_context *next; /* next buffer descriptor context */
+};
+
 struct eth_context {
 	ENET_Type *base;
 	void (*config_func)(void);
@@ -213,6 +219,8 @@ struct eth_context {
 	struct k_mutex ptp_mutex;
 #endif
 	struct k_sem tx_buf_sem;
+	struct eth_tx_bd_context tx_bd_context[CONFIG_ETH_MCUX_TX_BUFFERS];
+	struct eth_tx_bd_context *tx_bd_ctx_head;
 	phy_handle_t *phy_handle;
 	struct k_sem rx_thread_sem;
 #ifdef CONFIG_ETH_MCUX_TX_THREAD
@@ -230,6 +238,7 @@ struct eth_context {
 	void (*generate_mac)(uint8_t *);
 	struct k_work phy_work;
 	struct k_work_delayable delayed_phy_work;
+	enet_buffer_struct_t tx_buffer_desc[CONFIG_ETH_MCUX_TX_BUFFERS];
 
 	K_KERNEL_STACK_MEMBER(rx_thread_stack, ETH_MCUX_RX_THREAD_STACK_SIZE);
 	struct k_thread rx_thread;
@@ -736,33 +745,71 @@ static bool eth_get_ptp_data(struct net_if *iface, struct net_pkt *pkt)
 static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct eth_context *context = dev->data;
-	uint16_t total_len = net_pkt_get_len(pkt);
 	status_t status;
+	uint32_t buf_cnt = 0U;
+	enet_tx_frame_struct_t buffer_frames;
+	struct net_buf *frag = pkt->frags;
+	enet_buffer_struct_t *bufs = context->tx_buffer_desc;
+	struct eth_tx_bd_context *tx_ctx;
 
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	bool timestamped_frame;
 #endif
 
-	/* Wait until a buffer is available to transmit with */
-	k_sem_take(&context->tx_buf_sem, K_FOREVER);
-
 	k_mutex_lock(&context->tx_frame_buf_mutex, K_FOREVER);
 
-#ifdef CONFIG_SEGGER_SYSTEMVIEW
-	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_SEND_FRAME_EVENT, total_len);
-#endif
-
-	if (net_pkt_read(pkt, context->tx_frame_buf, total_len)) {
-		k_mutex_unlock(&context->tx_frame_buf_mutex);
-		return -EIO;
+	/* Populate buffer transmit descriptors from the data in network packet
+	 * fragments
+	 */
+	tx_ctx = context->tx_bd_ctx_head;
+	LOG_DBG("Placing TX BD records at %p", tx_ctx);
+	while (frag && (buf_cnt < CONFIG_ETH_MCUX_TX_BUFFERS)) {
+		bufs[buf_cnt].buffer = frag->data;
+		bufs[buf_cnt].length = frag->len;
+		/* Take buffer descriptor from semaphore since we use one for
+		 * each packet fragment */
+		k_sem_take(&context->tx_buf_sem, K_FOREVER);
+		/* Since the networking stack will modify the fragment pointers
+		 * after return from this function, we need to maintain
+		 * references to all fragment points as well as the network
+		 * packet.
+		 */
+		LOG_DBG("REF FRAG %p, data %p", frag, frag->data);
+		net_pkt_frag_ref(frag);
+		/* Add references to tx linked list */
+		/* Save references */
+		tx_ctx->frag = frag;
+		tx_ctx->pkt = pkt;
+		/* Next fragment */
+		buf_cnt++;
+		tx_ctx = tx_ctx->next;
+		frag = frag->frags;
 	}
+	LOG_DBG("%d TX BDs remain", k_sem_count_get(&context->tx_buf_sem));
+	/* Save previous head as the context for the frame */
+	buffer_frames.context = context->tx_bd_ctx_head;
+	/* Save new head of the linked list of tx bd contexts */
+	context->tx_bd_ctx_head = tx_ctx;
+
+	__ASSERT(buf_cnt <= CONFIG_ETH_MCUX_TX_BUFFERS,
+		"Not enable TX buffer descriptors for zero copy");
+
+	buffer_frames.txBuffNum = buf_cnt;
+	buffer_frames.txBuffArray = bufs;
+
+	/* Hold a reference count on the packet */
+	net_pkt_ref(pkt);
+
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	SEGGER_SYSVIEW_RecordU32(ETH_MCUX_SEND_FRAME_EVENT, buffer_frames.txBuffNum);
+#endif
 
 
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	timestamped_frame = eth_get_ptp_data(net_pkt_iface(pkt), pkt);
 	if (timestamped_frame) {
-		status = ENET_SendFrame(context->base, &context->enet_handle,
-					  context->tx_frame_buf, total_len, RING_ID, true, NULL);
+		status = ENET_StartTxFrame(context->base, &context->enet_handle,
+			&buffer_frames, RING_ID);
 		if (!status) {
 			context->ts_tx_pkt = net_pkt_ref(pkt);
 		} else {
@@ -772,8 +819,8 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	} else
 #endif
 	{
-		status = ENET_SendFrame(context->base, &context->enet_handle,
-					context->tx_frame_buf, total_len, RING_ID, false, NULL);
+		status = ENET_StartTxFrame(context->base, &context->enet_handle,
+			&buffer_frames, RING_ID);
 	}
 
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
@@ -1024,6 +1071,8 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 			 enet_event_t event, enet_frame_info_t *frameinfo, void *param)
 {
 	struct eth_context *context = param;
+	struct eth_tx_bd_context *tx_ctx;
+	struct net_pkt *pkt;
 #ifdef CONFIG_ETH_MCUX_TRACE_GPIOS
 	const struct device *gpio_1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
 #endif
@@ -1051,8 +1100,29 @@ static void eth_callback(ENET_Type *base, enet_handle_t *handle,
 		/* Register event */
 		ts_register_tx_event(context, frameinfo);
 #endif /* CONFIG_PTP_CLOCK_MCUX && CONFIG_NET_L2_PTP */
-		/* Free the TX buffer. */
-		k_sem_give(&context->tx_buf_sem);
+		if (frameinfo) {
+			tx_ctx = frameinfo->context;
+			LOG_DBG("Reading TX BD records from %p", tx_ctx);
+			pkt = tx_ctx->pkt;
+			/* Free each TX buffer descriptor we used.
+			 * All TX buffer descriptors should have the same
+			 * packet ref
+			 */
+			while (tx_ctx->pkt == pkt) {
+				LOG_DBG("UNREF FRAG %p", tx_ctx->frag);
+				net_pkt_frag_unref(tx_ctx->frag);
+				/* clear pkt and frag records */
+				tx_ctx->pkt = NULL;
+				tx_ctx->frag = NULL;
+				k_sem_give(&context->tx_buf_sem);
+				/* Next fragment */
+				tx_ctx = tx_ctx->next;
+			}
+			LOG_DBG("%d TX BDs available",
+				k_sem_count_get(&context->tx_buf_sem));
+			/* Unref the net_pkt, now that it was sent */
+			net_pkt_unref(pkt);
+		}
 #endif /* CONFIG_ETH_MCUX_TX_THREAD */
 		break;
 	case kENET_ErrEvent:
@@ -1193,14 +1263,31 @@ static void eth_mcux_init(const struct device *dev)
 	memset((void *)buffer_config->rxBdStartAddrAlign, 0, sizeof(enet_rx_bd_struct_t));
 	memset((void *)buffer_config->txBdStartAddrAlign, 0, sizeof(enet_tx_bd_struct_t));
 
+	/* Initialize all RX buffers used by the hardware */
 	for (int i = 0; i < CONFIG_ETH_MCUX_RX_BUFFERS; i++) {
 		context->rx_bufs[i].data = context->rx_buf_pool[i];
 		context->rx_bufs[i].in_use = false;
 	}
 
+	/* Initialize all TX buffer descriptor trackers,
+	 * making a circular linked list
+	 */
+	for (int i = 0; i < (CONFIG_ETH_MCUX_TX_BUFFERS) - 1; i++) {
+		context->tx_bd_context[i].frag = NULL;
+		context->tx_bd_context[i].pkt = NULL;
+		context->tx_bd_context[i].next = &context->tx_bd_context[i + 1];
+	}
+	/* Set up final tx buffer descriptor tracker to link to first tracker */
+	context->tx_bd_context[CONFIG_ETH_MCUX_TX_BUFFERS - 1].frag = NULL;
+	context->tx_bd_context[CONFIG_ETH_MCUX_TX_BUFFERS - 1].pkt = NULL;
+	context->tx_bd_context[CONFIG_ETH_MCUX_TX_BUFFERS - 1].next =
+		&context->tx_bd_context[0];
+	/* Initalize head point of the linked list */
+	context->tx_bd_ctx_head = &context->tx_bd_context[0];
+
 	ENET_GetDefaultConfig(&enet_config);
 	enet_config.interrupt |= (kENET_RxFrameInterrupt | kENET_LateCollisionInterrupt);
-	enet_config.interrupt |= (kENET_TxFrameInterrupt | kENET_TxBufferInterrupt);
+	enet_config.interrupt |= (kENET_TxFrameInterrupt);
 #if !defined(CONFIG_ETH_MCUX_NO_PHY_SMI)
 	enet_config.interrupt |= kENET_MiiInterrupt;
 #endif
@@ -1232,6 +1319,7 @@ static void eth_mcux_init(const struct device *dev)
 		  buffer_config,
 		  context->mac_addr,
 		  sys_clock);
+	ENET_SetTxReclaim(&context->enet_handle, true, RING_ID);
 
 #ifdef CONFIG_SEGGER_SYSTEMVIEW
 	SEGGER_SYSVIEW_RegisterModule(&enet_module);
@@ -1513,7 +1601,7 @@ static void eth_mcux_common_isr(const struct device *dev)
 #endif
 	}
 
-	if (EIR & kENET_TxFrameInterrupt) {
+	if (EIR & (kENET_TxFrameInterrupt | kENET_TxBufferInterrupt)) {
 #ifdef CONFIG_ETH_MCUX_TX_THREAD
 		context->tx_irq_num++;
 		ENET_ClearInterruptStatus(context->base, kENET_TxFrameInterrupt);
@@ -1786,7 +1874,8 @@ static void eth_mcux_err_isr(const struct device *dev)
 		ETH_MCUX_POWER(n)					\
 	};								\
 									\
-	ETH_MCUX_PTP_FRAMEINFO_ARRAY(n)					\
+	static enet_frame_info_t					\
+		eth##n##_tx_frameinfo_array[CONFIG_ETH_MCUX_TX_BUFFERS]; \
 									\
 	static const enet_buffer_config_t eth##n##_buffer_config = {	\
 		.rxBdNumber = ETH_MCUX_HAL_RX_BUFFERS,			\
@@ -1796,10 +1885,10 @@ static void eth_mcux_err_isr(const struct device *dev)
 		.rxBdStartAddrAlign = eth##n##_rx_buffer_desc,		\
 		.txBdStartAddrAlign = eth##n##_tx_buffer_desc,		\
 		.rxBufferAlign = NULL,					\
-		.txBufferAlign = eth##n##_tx_buffer[0],			\
+		.txBufferAlign = NULL,					\
 		.rxMaintainEnable = true,				\
 		.txMaintainEnable = true,				\
-		ETH_MCUX_PTP_FRAMEINFO(n)				\
+		.txFrameInfo = eth##n##_tx_frameinfo_array,		\
 	};								\
 									\
 	PM_DEVICE_DT_INST_DEFINE(n, eth_mcux_device_pm_action);		\
