@@ -23,6 +23,11 @@ config MULTITHREADING
 	  set to 'n'; disable only when you REALLY know what you are
 	  doing.
 
+config KERNEL_RELOCATE_CODE
+	bool "Relocate scheduler to ITCM"
+	select CODE_DATA_RELOCATION
+	default n
+
 config NUM_COOP_PRIORITIES
 	int "Number of coop priorities" if MULTITHREADING
 	default 1 if !MULTITHREADING

@@ -54,6 +54,11 @@ zephyr_library_include_directories(
   ${ARCH_DIR}/${ARCH}/include
   )
 
+if(CONFIG_NET_RELOCATE_CODE)
+zephyr_code_relocate(net_tc.c ITCM_TEXT)
+zephyr_code_relocate(net_pkt.c ITCM_TEXT)
+endif()
+
 if(CONFIG_NET_SHELL)
 zephyr_library_sources(net_shell.c)
 zephyr_library_include_directories(. ${ZEPHYR_BASE}/subsys/net/l2)

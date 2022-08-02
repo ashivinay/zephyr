@@ -29,6 +29,11 @@ zephyr_library_sources_ifdef(CONFIG_ETH_W5500		eth_w5500.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_SAM_GMAC	eth_sam_gmac.c)
 zephyr_library_sources_ifdef(CONFIG_DSA_KSZ8XXX		dsa_ksz8xxx.c)
 
+if(CONFIG_ETH_MCUX_RELOCATE_CODE)
+  # Relocate ethernet driver to ITCM for better performance
+  zephyr_code_relocate(eth_mcux.c ITCM_TEXT)
+endif()
+
 if(CONFIG_ETH_NATIVE_POSIX)
   set(native_posix_source_files eth_native_posix.c eth_native_posix_adapt.c)
   set_source_files_properties(${native_posix_source_files}

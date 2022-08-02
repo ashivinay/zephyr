@@ -73,6 +73,14 @@ config ETH_MCUX_TX_BUFFERS
 	help
 	  Set the number of TX buffers provided to the MCUX driver.
 
+config ETH_MCUX_RELOCATE_CODE
+	bool "Relocate code for improved performance"
+	select CODE_DATA_RELOCATION
+	default n
+	help
+	  Move ethernet driver code to tightly coupled memory for better
+	  performance
+
 config ETH_MCUX_HW_ACCELERATION
 	bool "Hardware acceleration"
 	default y

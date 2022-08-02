@@ -37,6 +37,11 @@ config NET_NATIVE_UDP
 	depends on NET_NATIVE
 	default y if NET_UDP
 
+config NET_RELOCATE_CODE
+	bool "Relocate networking transmit queues and packet management to ITCM"
+	select CODE_DATA_RELOCATION
+	default n
+
 config NET_OFFLOAD
 	bool "Offload IP stack"
 	help

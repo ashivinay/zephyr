@@ -101,6 +101,10 @@ target_sources_ifdef(
   userspace.c
   )
 
+if(CONFIG_KERNEL_RELOCATE_CODE)
+zephyr_code_relocate(sched.c ITCM_TEXT)
+endif()
+
 if(CONFIG_CACHE_MANAGEMENT AND CONFIG_USERSPACE)
   target_sources(kernel PRIVATE cache_handlers.c)
 endif()
