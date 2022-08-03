@@ -20,6 +20,9 @@
 #define LOG_LEVEL CONFIG_ETHERNET_LOG_LEVEL
 #define RING_ID 0
 
+extern void z_zsimple_function(void);
+#define SIMPLE_FUNC z_zsimple_function()
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
@@ -1284,6 +1287,8 @@ static int eth_init(const struct device *dev)
 		return err;
 	}
 #endif /* CONFIG_PINCTRL */
+
+	SIMPLE_FUNC;
 
 #if defined(CONFIG_NET_POWER_MANAGEMENT)
 	const uint32_t inst = ENET_GetInstance(context->base);
