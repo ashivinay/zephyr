@@ -6,3 +6,14 @@ description: NXP FlexSPI MX25UM51345G
 compatible: "nxp,imx-flexspi-mx25um51345g"
 
 include: ["nxp,imx-flexspi-device.yaml", soc-nv-flash.yaml]
+
+properties:
+  device-base:
+        type: int
+        required: false
+        description: |
+          Base memory mapped address of this flash device. Typically the same
+          base as the parent FlexSPI controller, but may vary if the device is
+          the second flash chip attached to one FlexSPI controller. If present,
+          this will be used as the flash base instead of base address of the
+          FlexSPI controller
