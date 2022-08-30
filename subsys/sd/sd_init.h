@@ -5,12 +5,14 @@
  */
 
 
-#ifndef ZEPHYR_SUBSYS_SD_SDIO_PRIV_H_
-#define ZEPHYR_SUBSYS_SD_SDIO_PRIV_H_
+#ifndef ZEPHYR_SUBSYS_SD_INIT_PRIV_H_
+#define ZEPHYR_SUBSYS_SD_INIT_PRIV_H_
 
 #include <zephyr/zephyr.h>
 #include <zephyr/sd/sd.h>
 
 int sdio_card_init(struct sd_card *card);
 
-#endif /* ZEPHYR_SUBSYS_SD_SDIO_PRIV_H_ */
+int sdmmc_card_init(struct sd_card *card);
+
+#endif /* ZEPHYR_SUBSYS_SD_INIT_PRIV_H_ */
