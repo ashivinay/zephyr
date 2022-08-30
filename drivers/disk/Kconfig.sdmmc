@@ -5,6 +5,7 @@
 DT_COMPAT_ST_STM32_SDMMC := st,stm32-sdmmc
 DT_COMPAT_ZEPHYR_SDMMC := zephyr,sdmmc-disk
 DT_STM32_SDMMC_HAS_DMA := $(dt_nodelabel_has_prop,sdmmc,dmas)
+DT_COMPAT_ZEPHYR_MMC := zephyr,mmc-disk
 
 config DISK_DRIVER_SDMMC
 	bool "SDMMC card driver"
@@ -31,7 +32,14 @@ config SDMMC_SUBSYS
 	select SDMMC_STACK
 	default $(dt_compat_enabled,$(DT_COMPAT_ZEPHYR_SDMMC))
 	help
-	  Enable SDMMC access via SD subsystem.
+	  Enable SDMMC access via SD subsystem
+
+config MMC_SUBSYS
+	bool "MMC access via SD subsystem"
+	select MMC_STACK
+	default $(dt_compat_enabled,$(DT_COMPAT_ZEPHYR_MMC))
+	help
+	  Enable MMC access via SD subsystem
 
 config SDMMC_STM32
 	bool "STM32 SDMMC driver"
