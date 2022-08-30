@@ -10,10 +10,77 @@
 #include <zephyr/sd/sd_spec.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/drivers/disk.h>
 
 #include "sd_utils.h"
 
 LOG_MODULE_DECLARE(sd, CONFIG_SD_LOG_LEVEL);
+
+
+/* Read card status. Return 0 if card is inactive */
+int sdmmc_read_status(struct sd_card *card)
+{
+        struct sdhc_command cmd = {0};
+        int ret;
+
+        cmd.opcode = SD_SEND_STATUS;
+        if (!card->host_props.is_spi) {
+                cmd.arg = (card->relative_addr << 16U);
+        }
+        cmd.response_type = (SD_RSP_TYPE_R1 | SD_SPI_RSP_TYPE_R2);
+        cmd.timeout_ms = CONFIG_SD_CMD_TIMEOUT;
+
+        ret = sdhc_request(card->sdhc, &cmd, NULL);
+        if (ret) {
+                return SD_RETRY;
+        }
+        if (card->host_props.is_spi) {
+                /* Check R2 response bits */
+                if ((cmd.response[0U] & SDHC_SPI_R2_CARD_LOCKED) ||
+                        (cmd.response[0U] & SDHC_SPI_R2_UNLOCK_FAIL)) {
+                        return -EACCES;
+                } else if ((cmd.response[0U] & SDHC_SPI_R2_WP_VIOLATION) ||
+                        (cmd.response[0U] & SDHC_SPI_R2_ERASE_PARAM) ||
+                        (cmd.response[0U] & SDHC_SPI_R2_OUT_OF_RANGE)) {
+                        return -EINVAL;
+                } else if ((cmd.response[0U] & SDHC_SPI_R2_ERR) ||
+                        (cmd.response[0U] & SDHC_SPI_R2_CC_ERR) ||
+                        (cmd.response[0U] & SDHC_SPI_R2_ECC_FAIL)) {
+                        return -EIO;
+                }
+                /* Otherwise, no error in R2 response */
+                return 0;
+        }
+        /* Otherwise, check native card response */
+        if ((cmd.response[0U] & SD_R1_RDY_DATA) &&
+                (SD_R1_CURRENT_STATE(cmd.response[0U]) == SDMMC_R1_TRANSFER)) {
+                return 0;
+        }
+        /* Valid response, the card is busy */
+        return -EBUSY;
+}
+
+
+/* Waits for SD card to be ready for data. Returns 0 if card is ready */
+int sdmmc_wait_ready(struct sd_card *card)
+{
+        int ret, timeout = CONFIG_SD_DATA_TIMEOUT * 1000;
+        bool busy = true;
+
+        do {
+                busy = sdhc_card_busy(card->sdhc);
+                if (!busy) {
+                        /* Check card status */
+                        ret = sd_retry(sdmmc_read_status, card, CONFIG_SD_RETRY_COUNT);
+                        busy = (ret != 0);
+                } else {
+                        /* Delay 125us before polling again */
+                        k_busy_wait(125);
+                        timeout -= 125;
+                }
+        } while (busy && (timeout > 0));
+        return busy;
+}
 
 static inline void sdmmc_decode_csd(struct sd_csd *csd,
 	uint32_t *raw_csd, uint32_t *blk_count, uint32_t *blk_size)
@@ -196,7 +263,6 @@ static int sdmmc_read_cxd(struct sd_card *card,
 		LOG_DBG("CMD%d failed: %d", opcode, ret);
 		return ret;
 	}
-
 	/* CSD/CID is 16 bytes */
 	memcpy(cxd, cmd.response, 16);
 	return 0;
@@ -222,7 +288,6 @@ int sdmmc_read_csd(struct sd_card *card)
 	if (ret) {
 		return ret;
 	}
-
 	sdmmc_decode_csd(&card_csd, csd,
 		&card->block_count, &card->block_size);
 	LOG_DBG("Card block count %d, block size %d",
@@ -235,8 +300,10 @@ int sdmmc_read_cid(struct sd_card *card)
 {
 	uint32_t cid[4];
 	int ret;
+#if defined(CONFIG_SDMMC_STACK) || defined(CONFIG_SDIO_STACK)
 	/* Keep CID on stack for reduced RAM usage */
 	struct sd_cid card_cid;
+#endif
 
 	if (card->host_props.is_spi && IS_ENABLED(CONFIG_SDHC_SUPPORTS_SPI_MODE)) {
 		ret = sdmmc_spi_read_cxd(card, SD_SEND_CID, cid);
@@ -250,11 +317,26 @@ int sdmmc_read_cid(struct sd_card *card)
 		return ret;
 	}
 
+#if defined(CONFIG_SDMMC_STACK) || defined(CONFIG_SDIO_STACK)
 	/* Decode SD CID */
-	sdmmc_decode_cid(&card_cid, cid);
-	LOG_DBG("Card MID: 0x%x, OID: %c%c", card_cid.manufacturer,
-		((char *)&card_cid.application)[0],
-		((char *)&card_cid.application)[1]);
+	if (card->type != CARD_MMC) {
+		sdmmc_decode_cid(&card_cid, cid);
+		LOG_DBG("Card MID: 0x%x, OID: %c%c", card_cid.manufacturer,
+			((char *)&card_cid.application)[0],
+			((char *)&card_cid.application)[1]);
+
+		//DEBUG LINE
+		printk("Card MID: 0x%x, OID: %c%c", card_cid.manufacturer,
+			((char *)&card_cid.application)[0],
+			((char *)&card_cid.application)[1]);
+	}
+#endif
+#if defined(CONFIG_MMC_STACK)
+	/* MMC CID is different from SDMMC and SDIO,
+	 * but not required to decode, just to request.*/
+	LOG_DBG("MMC CID decoding not yet implemented.");
+#endif
+
 	return 0;
 }
 
@@ -379,7 +461,7 @@ int sdmmc_select_card(struct sd_card *card)
 	int ret;
 
 	cmd.opcode = SD_SELECT_CARD;
-	cmd.arg = (card->relative_addr << 16U);
+	cmd.arg = ((card->relative_addr) << 16U);
 	cmd.response_type = SD_RSP_TYPE_R1;
 	cmd.timeout_ms = CONFIG_SD_CMD_TIMEOUT;
 
@@ -392,6 +474,358 @@ int sdmmc_select_card(struct sd_card *card)
 	if (ret) {
 		LOG_DBG("CMD7 reports error");
 		return ret;
+	}
+	return 0;
+}
+
+/* Helper to send SD app command */
+int card_app_command(struct sd_card *card, int relative_card_address)
+{
+	struct sdhc_command cmd = {0};
+	int ret;
+
+	cmd.opcode = SD_APP_CMD;
+	cmd.arg = relative_card_address << 16U;
+	cmd.response_type = (SD_RSP_TYPE_R1 | SD_SPI_RSP_TYPE_R1);
+	cmd.timeout_ms = CONFIG_SD_CMD_TIMEOUT;
+	ret = sdhc_request(card->sdhc, &cmd, NULL);
+	if (ret) {
+		/* We want to retry transmission */
+		return SD_RETRY;
+	}
+	ret = sd_check_response(&cmd);
+	if (ret) {
+		LOG_WRN("SD app command failed with R1 response of 0x%X",
+			cmd.response[0]);
+		return -EIO;
+	}
+	/* Check application command flag to determine if card is ready for APP CMD */
+	if ((!card->host_props.is_spi) && !(cmd.response[0U] & SD_R1_APP_CMD)) {
+		/* Command succeeded, but card not ready for app command. No APP CMD support */
+		return -ENOTSUP;
+	}
+	return 0;
+}
+
+static int card_read(struct sd_card *card, uint8_t *rbuf,
+	uint32_t start_block, uint32_t num_blocks)
+{
+	int ret;
+	struct sdhc_command cmd = {0};
+	struct sdhc_data data = {0};
+
+	/*
+	 * Note: The SD specification allows for CMD23 to be sent before a
+	 * transfer in order to set the block length (often preferable).
+	 * The specification also requires that CMD12 be sent to stop a transfer.
+	 * However, the host specification defines support for "Auto CMD23" and
+	 * "Auto CMD12", where the host sends CMD23 and CMD12 automatically to
+	 * remove the overhead of interrupts in software from sending these
+	 * commands. Therefore, we will not handle CMD12 or CMD23 at this layer.
+	 * The host SDHC driver is expected to recognize CMD17, CMD18, CMD24,
+	 * and CMD25 as special read/write commands and handle CMD23 and
+	 * CMD12 appropriately.
+	 */
+	cmd.opcode = (num_blocks == 1U) ? SD_READ_SINGLE_BLOCK : SD_READ_MULTIPLE_BLOCK;
+	if (!(card->flags & SD_HIGH_CAPACITY_FLAG)) {
+		/* SDSC cards require block size in bytes, not blocks */
+		cmd.arg = start_block * card->block_size;
+	} else {
+		cmd.arg = start_block;
+	}
+	cmd.response_type = (SD_RSP_TYPE_R1 | SD_SPI_RSP_TYPE_R1);
+	cmd.timeout_ms = CONFIG_SD_CMD_TIMEOUT;
+	cmd.retries = CONFIG_SD_DATA_RETRIES;
+
+	data.block_addr = start_block;
+	data.block_size = card->block_size;
+	data.blocks = num_blocks;
+	data.data = rbuf;
+	data.timeout_ms = CONFIG_SD_DATA_TIMEOUT;
+
+	LOG_DBG("READ: Sector = %u, Count = %u", start_block, num_blocks);
+
+	ret = sdhc_request(card->sdhc, &cmd, &data);
+	if (ret) {
+		LOG_ERR("Failed to read from SDMMC %d", ret);
+		return ret;
+	}
+
+	/* Verify card is back in transfer state after read */
+	if (!card->host_props.is_spi) {
+		ret = sdmmc_wait_ready(card);
+		if (ret) {
+			LOG_ERR("Card did not return to ready state");
+			k_mutex_unlock(&card->lock);
+			return -ETIMEDOUT;
+		}
+	}
+	return 0;
+}
+
+/* Reads data from SD card memory card */
+int card_read_blocks(struct sd_card *card, uint8_t *rbuf,
+	uint32_t start_block, uint32_t num_blocks)
+{
+	int ret;
+	uint32_t rlen;
+	uint32_t sector;
+	uint8_t *buf_offset;
+
+	if ((start_block + num_blocks) > card->block_count) {
+		return -EINVAL;
+	}
+	if (card->type == CARD_SDIO) {
+		LOG_WRN("SDIO does not support MMC commands");
+		return -ENOTSUP;
+	}
+	ret = k_mutex_lock(&card->lock, K_NO_WAIT);
+	if (ret) {
+		LOG_WRN("Could not get SD card mutex");
+		return -EBUSY;
+	}
+
+	/*
+	 * If the buffer we are provided with is aligned, we can use it
+	 * directly. Otherwise, we need to use the card's internal buffer
+	 * and memcpy the data back out
+	 */
+	if ((((uintptr_t)rbuf) & (CONFIG_SDHC_BUFFER_ALIGNMENT - 1)) != 0) {
+		/* lower bits of address are set, not aligned. Use internal buffer */
+		LOG_DBG("Unaligned buffer access to SD card may incur performance penalty");
+		if (sizeof(card->card_buffer) < card->block_size) {
+			LOG_ERR("Card buffer size needs to be increased for "
+				"unaligned writes to work");
+			k_mutex_unlock(&card->lock);
+			return -ENOBUFS;
+		}
+		rlen = sizeof(card->card_buffer) / card->block_size;
+		sector = 0;
+		buf_offset = rbuf;
+		while (sector < num_blocks) {
+			/* Read from disk to card buffer */
+			ret = card_read(card, card->card_buffer,
+				sector + start_block, rlen);
+			if (ret) {
+				LOG_ERR("Write failed");
+				k_mutex_unlock(&card->lock);
+				return ret;
+			}
+			/* Copy data from card buffer */
+			memcpy(buf_offset, card->card_buffer, rlen * card->block_size);
+			/* Increase sector count and buffer offset */
+			sector += rlen;
+			buf_offset += rlen * card->block_size;
+		}
+	} else {
+		/* Aligned buffers can be used directly */
+		ret = card_read(card, rbuf, start_block, num_blocks);
+		if (ret) {
+			LOG_ERR("Card read failed");
+			k_mutex_unlock(&card->lock);
+			return ret;
+		}
+	}
+	k_mutex_unlock(&card->lock);
+	return 0;
+}
+
+/*
+ * Sends ACMD22 (number of written blocks) to see how many blocks were written
+ * to a card
+ */
+static int card_query_written(struct sd_card *card, uint32_t *num_written)
+{
+	int ret;
+	struct sdhc_command cmd = {0};
+	struct sdhc_data data = {0};
+	uint32_t *blocks = (uint32_t *)card->card_buffer;
+
+	ret = card_app_command(card, card->relative_addr);
+	if (ret) {
+		LOG_DBG("App CMD for ACMD22 failed");
+		return ret;
+	}
+
+	cmd.opcode = SD_APP_SEND_NUM_WRITTEN_BLK;
+	cmd.arg = 0;
+	cmd.response_type = (SD_RSP_TYPE_R1 | SD_SPI_RSP_TYPE_R1);
+	cmd.timeout_ms = CONFIG_SD_CMD_TIMEOUT;
+
+	data.block_size = 4U;
+	data.blocks = 1U;
+	data.data = blocks;
+	data.timeout_ms = CONFIG_SD_DATA_TIMEOUT;
+
+	ret = sdhc_request(card->sdhc, &cmd, &data);
+	if (ret) {
+		LOG_DBG("ACMD22 failed: %d", ret);
+		return ret;
+	}
+	ret = sd_check_response(&cmd);
+	if (ret) {
+		LOG_DBG("ACMD22 reports error");
+		return ret;
+	}
+
+	/* Decode blocks */
+	*num_written = sys_be32_to_cpu(blocks[0]);
+	return 0;
+}
+
+static int card_write(struct sd_card *card, const uint8_t *wbuf,
+	uint32_t start_block, uint32_t num_blocks)
+{
+	int ret;
+	uint32_t blocks;
+	struct sdhc_command cmd = {0};
+	struct sdhc_data data = {0};
+
+	/*
+	 * See the note in card_read() above. We will not issue CMD23
+	 * or CMD12, and expect the host to handle those details.
+	 */
+	cmd.opcode = (num_blocks == 1) ? SD_WRITE_SINGLE_BLOCK : SD_WRITE_MULTIPLE_BLOCK;
+	if (!(card->flags & SD_HIGH_CAPACITY_FLAG)) {
+		/* SDSC cards require block size in bytes, not blocks */
+		cmd.arg = start_block * card->block_size;
+	} else {
+		cmd.arg = start_block;
+	}
+	cmd.response_type = (SD_RSP_TYPE_R1 | SD_SPI_RSP_TYPE_R1);
+	cmd.timeout_ms = CONFIG_SD_CMD_TIMEOUT;
+	cmd.retries = CONFIG_SD_DATA_RETRIES;
+
+	data.block_addr = start_block;
+	data.block_size = card->block_size;
+	data.blocks = num_blocks;
+	data.data = (uint8_t *)wbuf;
+	data.timeout_ms = CONFIG_SD_DATA_TIMEOUT;
+
+	LOG_DBG("WRITE: Sector = %u, Count = %u", start_block, num_blocks);
+
+	ret = sdhc_request(card->sdhc, &cmd, &data);
+	if (ret) {
+		LOG_DBG("Write failed: %d", ret);
+		if (card->host_props.is_spi) {
+			/* Just check card status */
+			ret = sdmmc_read_status(card);
+		} else {
+			/* Wait for card to be idle */
+			ret = sdmmc_wait_ready(card);
+		}
+		if (ret) {
+			return ret;
+		}
+		/* Query card to see how many blocks were actually written */
+		ret = card_query_written(card, &blocks);
+		if (ret) {
+			return ret;
+		}
+		LOG_ERR("Only %d blocks of %d were written", blocks, num_blocks);
+		return -EIO;
+	}
+	/* Verify card is back in transfer state after write */
+	if (card->host_props.is_spi) {
+		/* Just check card status */
+		ret = sdmmc_read_status(card);
+	} else {
+		/* Wait for card to be idle */
+		ret = sdmmc_wait_ready(card);
+	}
+	if (ret) {
+		LOG_ERR("Card did not return to ready state");
+		return -ETIMEDOUT;
+	}
+	return 0;
+}
+
+/* Writes data to SD card memory card */
+int card_write_blocks(struct sd_card *card, const uint8_t *wbuf,
+	uint32_t start_block, uint32_t num_blocks)
+{
+	int ret;
+	uint32_t wlen;
+	uint32_t sector;
+	const uint8_t *buf_offset;
+
+	if ((start_block + num_blocks) > card->block_count) {
+		return -EINVAL;
+	}
+	if (card->type == CARD_SDIO) {
+		LOG_WRN("SDIO does not support MMC commands");
+		return -ENOTSUP;
+	}
+	ret = k_mutex_lock(&card->lock, K_NO_WAIT);
+	if (ret) {
+		LOG_WRN("Could not get SD card mutex");
+		return -EBUSY;
+	}
+	/*
+	 * If the buffer we are provided with is aligned, we can use it
+	 * directly. Otherwise, we need to use the card's internal buffer
+	 * and memcpy the data back out
+	 */
+	if ((((uintptr_t)wbuf) & (CONFIG_SDHC_BUFFER_ALIGNMENT - 1)) != 0) {
+		/* lower bits of address are set, not aligned. Use internal buffer */
+		LOG_DBG("Unaligned buffer access to SD card may incur performance penalty");
+		if (sizeof(card->card_buffer) < card->block_size) {
+			LOG_ERR("Card buffer size needs to be increased for "
+				"unaligned writes to work");
+			k_mutex_unlock(&card->lock);
+			return -ENOBUFS;
+		}
+		wlen = sizeof(card->card_buffer) / card->block_size;
+		sector = 0;
+		buf_offset = wbuf;
+		while (sector < num_blocks) {
+			/* Copy data into card buffer */
+			memcpy(card->card_buffer, buf_offset, wlen * card->block_size);
+			/* Write card buffer to disk */
+			ret = card_write(card, card->card_buffer,
+				sector + start_block, wlen);
+			if (ret) {
+				LOG_ERR("Write failed");
+				k_mutex_unlock(&card->lock);
+				return ret;
+			}
+			/* Increase sector count and buffer offset */
+			sector += wlen;
+			buf_offset += wlen * card->block_size;
+		}
+	} else {
+		/* We can use aligned buffers directly */
+		ret = card_write(card, wbuf, start_block, num_blocks);
+		if (ret) {
+			LOG_ERR("Write failed");
+			k_mutex_unlock(&card->lock);
+			return ret;
+		}
+	}
+	k_mutex_unlock(&card->lock);
+	return 0;
+}
+
+
+/* IO Control handler for SD MMC */
+int card_ioctl(struct sd_card *card, uint8_t cmd, void *buf)
+{
+	switch (cmd) {
+	case DISK_IOCTL_GET_SECTOR_COUNT:
+		(*(uint32_t *)buf) = card->block_count;
+		break;
+	case DISK_IOCTL_GET_SECTOR_SIZE:
+	case DISK_IOCTL_GET_ERASE_BLOCK_SZ:
+		(*(uint32_t *)buf) = card->block_size;
+		break;
+	case DISK_IOCTL_CTRL_SYNC:
+		/* Ensure card is not busy with data write.
+		 * Note that SD stack does not support enabling caching, so
+		 * cache flush is not required here
+		 */
+		return sdmmc_wait_ready(card);
+	default:
+		return -ENOTSUP;
 	}
 	return 0;
 }
