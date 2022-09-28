@@ -28,6 +28,10 @@ zephyr_library_sources_ifdef(CONFIG_ETH_STM32_HAL	eth_stm32_hal.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_W5500		eth_w5500.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_SAM_GMAC	eth_sam_gmac.c)
 
+if (CONFIG_NET_CODE_RELOCATE)
+  zephyr_code_relocate(eth_mcux.c "${CONFIG_NET_CODE_RAM_NAME}_TEXT")
+endif()
+
 if(CONFIG_ETH_NATIVE_POSIX)
   set(native_posix_source_files eth_native_posix.c eth_native_posix_adapt.c)
   set_source_files_properties(${native_posix_source_files}
