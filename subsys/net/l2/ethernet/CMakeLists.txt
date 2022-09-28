@@ -3,6 +3,11 @@
 zephyr_include_directories(${ZEPHYR_BASE}/subsys/net/l2)
 
 zephyr_library()
+
+if(CONFIG_NET_CODE_RELOCATE)
+  zephyr_library_relocate("${CONFIG_NET_CODE_RAM_NAME}_TEXT")
+endif()
+
 zephyr_library_include_directories(. ${ZEPHYR_BASE}/subsys/net/ip)
 zephyr_library_compile_definitions_ifdef(
   CONFIG_NEWLIB_LIBC __LINUX_ERRNO_EXTENSIONS__
