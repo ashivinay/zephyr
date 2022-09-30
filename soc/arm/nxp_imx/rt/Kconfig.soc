@@ -320,7 +320,6 @@ config SOC_MIMXRT1176_CM7
 	select INIT_VIDEO_PLL
 	select HAS_MCUX_EDMA
 	select CPU_HAS_FPU_DOUBLE_PRECISION
-	select ADJUST_DCDC
 	select BYPASS_LDO_LPSR
 	select ADJUST_LDO
 	select HAS_MCUX_PWM
@@ -388,7 +387,6 @@ config SOC_MIMXRT1166_CM7
 	select INIT_VIDEO_PLL
 	select HAS_MCUX_EDMA
 	select CPU_HAS_FPU_DOUBLE_PRECISION
-	select ADJUST_DCDC
 	select BYPASS_LDO_LPSR
 	select ADJUST_LDO
 	select HAS_MCUX_PWM
@@ -651,6 +649,7 @@ config DCDC_VALUE
 
 config ADJUST_DCDC
 	bool "Adjust internal DCDC output"
+	default n
 
 config BYPASS_LDO_LPSR
 	bool "Bypass LDO lpsr"
