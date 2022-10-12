@@ -272,6 +272,83 @@ class CMake:
 
         return results
 
+    def run_filter_cmake(self, args=""):
+
+        if not self.options.disable_warnings_as_errors:
+            ldflags = "-Wl,--fatal-warnings"
+            cflags = "-Werror"
+            aflags = "-Werror -Wa,--fatal-warnings"
+            gen_defines_args = "--edtlib-Werror"
+        else:
+            ldflags = cflags = aflags = ""
+            gen_defines_args = ""
+
+        logger.debug("Filtering with cmake on %s for %s" % (self.source_dir, self.platform.name))
+        cmake_args = [
+            f'-B{self.build_dir}',
+            f'-DTC_RUNID={self.instance.run_id}',
+            f'-DEXTRA_CFLAGS={cflags}',
+            f'-DEXTRA_AFLAGS={aflags}',
+            f'-DEXTRA_LDFLAGS={ldflags}',
+            f'-DEXTRA_GEN_DEFINES_ARGS={gen_defines_args}',
+            f'-G{self.env.generator}'
+        ]
+
+        # First, run CMake using the package_helper script, to only run
+        # a subset of all cmake modules. This output will be used to filter
+        # testcases, and the full CMake configuration will be run for
+        # testcases that should be built
+        cmake_filter_args = [
+            f'-S{self.source_dir}',
+            '-DMODULES=dts,kconfig'
+            f'-P{canonical_zephyr_base}/cmake/package_helper.cmake',
+        ]
+
+        cmake_args.extend(args)
+
+        cmake_opts = ['-DBOARD={}'.format(self.platform.name)]
+        cmake_args.extend(cmake_opts)
+
+        cmake = shutil.which('cmake')
+        cmd = [cmake] + cmake_args + cmake_filter_args
+        kwargs = dict()
+
+        log_command(logger, "Calling cmake", cmd)
+
+        if self.capture_output:
+            kwargs['stdout'] = subprocess.PIPE
+            # CMake sends the output of message() to stderr unless it's STATUS
+            kwargs['stderr'] = subprocess.STDOUT
+
+        if self.cwd:
+            kwargs['cwd'] = self.cwd
+
+        p = subprocess.Popen(cmd, **kwargs)
+        out, _ = p.communicate()
+
+        if p.returncode == 0:
+            filter_results = self.parse_generated()
+            msg = "Finished filtering %s for %s" % (self.source_dir, self.platform.name)
+            logger.debug(msg)
+            results = {'msg': msg, 'filter': filter_results}
+
+        else:
+            self.instance.status = "error"
+            self.instance.reason = "Cmake build failure"
+
+            for tc in self.instance.testcases:
+                tc.status = self.instance.status
+
+            logger.error("Cmake build failure: %s for %s" % (self.source_dir, self.platform.name))
+            results = {"returncode": p.returncode}
+
+        if out:
+            with open(os.path.join(self.build_dir, self.log), "a", encoding=self.default_encoding) as log:
+                log_msg = out.decode(self.default_encoding)
+                log.write(log_msg)
+
+        return results
+
     def run_cmake(self, args=""):
 
         if not self.options.disable_warnings_as_errors:
@@ -329,10 +406,9 @@ class CMake:
         out, _ = p.communicate()
 
         if p.returncode == 0:
-            filter_results = self.parse_generated()
             msg = "Finished building %s for %s" % (self.source_dir, self.platform.name)
             logger.debug(msg)
-            results = {'msg': msg, 'filter': filter_results}
+            results = {'msg': msg}
 
         else:
             self.instance.status = "error"
@@ -462,6 +538,7 @@ class ProjectBuilder(FilterBuilder):
         self.options = env.options
         self.env = env
         self.duts = None
+        self.cmake_args = ""
 
     @staticmethod
     def log_info(filename, inline_logs):
@@ -504,13 +581,9 @@ class ProjectBuilder(FilterBuilder):
         self.instance.setup_handler(self.env)
 
         # The build process, call cmake and build with configured generator
-        if op == "cmake":
-            res = self.cmake()
+        if op == "filter":
+            res = self.filter()
             if self.instance.status in ["failed", "error"]:
-                pipeline.put({"op": "report", "test": self.instance})
-            elif self.options.cmake_only:
-                if self.instance.status is None:
-                    self.instance.status = "passed"
                 pipeline.put({"op": "report", "test": self.instance})
             else:
                 # Here we check the runtime filter results coming from running cmake
@@ -522,7 +595,16 @@ class ProjectBuilder(FilterBuilder):
                     self.instance.add_missing_case_status("skipped")
                     pipeline.put({"op": "report", "test": self.instance})
                 else:
-                    pipeline.put({"op": "build", "test": self.instance})
+                    pipeline.put({"op": "cmake", "test": self.instance})
+
+        elif op == "cmake":
+            res = self.cmake()
+            if self.instance.status in ["failed", "error"]:
+                pipeline.put({"op": "report", "test": self.instance})
+            elif self.options.cmake_only:
+                if self.instance.status is None:
+                    self.instance.status = "passed"
+                pipeline.put({"op": "report", "test": self.instance})
 
         elif op == "build":
             logger.debug("build test: %s" % self.instance.name)
@@ -774,8 +856,7 @@ class ProjectBuilder(FilterBuilder):
                              )
         sys.stdout.flush()
 
-    def cmake(self):
-
+    def filter(self):
         instance = self.instance
         args = self.testsuite.extra_args[:]
 
@@ -809,7 +890,12 @@ class ProjectBuilder(FilterBuilder):
 
         args_expanded = ["-D{}".format(a.replace('"', '\"')) for a in self.options.extra_args]
         args_expanded = args_expanded + ["-D{}".format(a.replace('"', '')) for a in args]
-        res = self.run_cmake(args_expanded)
+        self.cmake_args = args_expanded
+        res = self.run_filter_cmake(self.cmake_args)
+        return res
+
+    def cmake(self):
+        res = self.run_cmake(self.cmake_args)
         return res
 
     def build(self):
@@ -977,7 +1063,7 @@ class TwisterRunner:
                 if test_only and instance.run:
                     pipeline.put({"op": "run", "test": instance})
                 else:
-                    pipeline.put({"op": "cmake", "test": instance})
+                    pipeline.put({"op": "filter", "test": instance})
 
     def pipeline_mgr(self, pipeline, done_queue, lock, results):
         while True:
