@@ -1,5 +1,6 @@
 common:
     sysbuild: True
+    depends_on: mcuboot
     harness: console
     harness_config:
       type: multi_line
@@ -12,4 +13,3 @@ common:
 tests:
   boot.mcuboot:
     tags: mcuboot
-    platform_allow: frdm_k64f mimxrt1060_evk
