@@ -13,5 +13,6 @@ supported:
   - watchdog
   - i2c
   - netif:eth
+  - mcuboot
 ram: 256
 flash: 2048

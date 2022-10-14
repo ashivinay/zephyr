@@ -11,5 +11,6 @@ supported:
   - gpio
   - i2c
   - spi
+  - mcuboot
 ram: 64
 flash: 512

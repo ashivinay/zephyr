@@ -30,3 +30,4 @@ supported:
   - spi
   - watchdog
   - usb_device
+  - mcuboot

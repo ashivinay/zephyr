@@ -18,5 +18,6 @@ supported:
   - backup_sram
   - usb
   - quadspi
+  - mcuboot
 ram: 128
 flash: 512

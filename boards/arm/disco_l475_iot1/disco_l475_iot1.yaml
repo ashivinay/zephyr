@@ -23,5 +23,6 @@ supported:
   - adc
   - dac
   - dma
+  - mcuboot
 ram: 96
 flash: 1024

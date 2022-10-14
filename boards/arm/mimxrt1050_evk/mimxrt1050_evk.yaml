@@ -29,3 +29,4 @@ supported:
   - kscan:touch
   - watchdog
   - adc
+  - mcuboot

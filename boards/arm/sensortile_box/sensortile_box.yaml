@@ -14,5 +14,6 @@ supported:
   - usb device
   - nvs
   - counter
+  - mcuboot
 ram: 640
 flash: 2048

@@ -18,6 +18,7 @@ supported:
   - pwm
   - spi
   - watchdog
+  - mcuboot
 testing:
   ignore_tags:
     - net

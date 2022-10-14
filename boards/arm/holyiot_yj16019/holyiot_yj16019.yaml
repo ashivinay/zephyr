@@ -10,5 +10,6 @@ supported:
   - ble
   - pwm
   - watchdog
+  - mcuboot
 ram: 64
 flash: 512

@@ -25,3 +25,4 @@ supported:
   - can
   - canfd
   - dac
+  - mcuboot

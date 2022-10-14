@@ -33,3 +33,4 @@ supported:
   - can
   - watchdog
   - adc
+  - mcuboot

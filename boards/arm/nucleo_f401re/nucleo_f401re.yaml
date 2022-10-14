@@ -17,5 +17,6 @@ supported:
   - spi
   - adc
   - watchdog
+  - mcuboot
 ram: 96
 flash: 512
