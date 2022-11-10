@@ -31,6 +31,20 @@ int pinctrl_configure_pins(const pinctrl_soc_pin_t *pins, uint8_t pin_cnt,
 			}
 		}
 #endif
+
+#ifdef CONFIG_SOC_MIMX93_A55
+		*((volatile uint32_t *)((uintptr_t)mux_register)) =
+			IOMUXC1_SW_MUX_CTL_PAD_MUX_MODE(mux_mode) |
+			IOMUXC1_SW_MUX_CTL_PAD_SION(MCUX_IMX_INPUT_ENABLE(pin_ctrl_flags));
+		if (input_register) {
+			*((volatile uint32_t *)((uintptr_t)input_register)) =
+				IOMUXC1_SELECT_INPUT_DAISY(input_daisy);
+		}
+		if (config_register) {
+			*((volatile uint32_t *)((uintptr_t)config_register)) =
+				pin_ctrl_flags & (~(0x1 << MCUX_IMX_INPUT_ENABLE_SHIFT));
+		}
+#else
 		*((volatile uint32_t *)((uintptr_t)mux_register)) =
 			IOMUXC_SW_MUX_CTL_PAD_MUX_MODE(mux_mode) |
 			IOMUXC_SW_MUX_CTL_PAD_SION(MCUX_IMX_INPUT_ENABLE(pin_ctrl_flags));
@@ -42,7 +56,7 @@ int pinctrl_configure_pins(const pinctrl_soc_pin_t *pins, uint8_t pin_cnt,
 			*((volatile uint32_t *)((uintptr_t)config_register)) =
 				pin_ctrl_flags & (~(0x1 << MCUX_IMX_INPUT_ENABLE_SHIFT));
 		}
-
+#endif
 
 	}
 	return 0;
