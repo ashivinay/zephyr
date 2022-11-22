@@ -193,7 +193,7 @@ arduino_spi: &spi0 {
 };
 
 zephyr_udc0: &usbotg {
-	compatible = "nxp,kinetis-usbd";
+	compatible = "nxp,mcux-usbd";
 	status = "okay";
 	num-bidir-endpoints = <8>;
 };

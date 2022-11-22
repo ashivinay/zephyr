@@ -19,6 +19,10 @@
 #include "usb_device_config.h"
 #include "usb_device_dci.h"
 
+#ifdef CONFIG_USB_DC_NXP_KHCI
+#include "usb_device_khci.h"
+#endif
+
 #ifdef CONFIG_USB_DC_NXP_EHCI
 #include "usb_device_ehci.h"
 #endif
@@ -128,6 +132,15 @@ static const usb_device_controller_interface_struct_t mcux_usb_iface = {
 
 extern void USB_DeviceLpcIp3511IsrFunction(void *deviceHandle);
 
+#elif defined(CONFIG_USB_DC_NXP_KHCI)
+/* LPCIP3511 device driver interface */
+static const usb_device_controller_interface_struct_t mcux_usb_iface = {
+	USB_DeviceKhciInit, USB_DeviceKhciDeinit, USB_DeviceKhciSend,
+	USB_DeviceKhciRecv, USB_DeviceKhciCancel, USB_DeviceKhciControl
+};
+
+extern void USB_DeviceKhciIsrFunction(void *deviceHandle);
+
 #endif
 
 int usb_dc_reset(void)
@@ -140,6 +153,8 @@ int usb_dc_reset(void)
 						dev_state.dev_struct.controllerHandle);
 		dev_state.dev_struct.controllerHandle = NULL;
 	}
+
+	LOG_DBG("Reset done");
 
 	return 0;
 }
@@ -177,6 +192,7 @@ int usb_dc_attach(void)
 
 int usb_dc_detach(void)
 {
+
 	usb_status_t status;
 
 	if (dev_state.dev_struct.controllerHandle == NULL) {
@@ -210,6 +226,11 @@ int usb_dc_set_address(const uint8_t addr)
 	usb_status_t status;
 
 	dev_state.dev_struct.deviceAddress = addr;
+
+#ifdef CONFIG_USB_DC_NXP_KHCI
+	/* Save the device address and set it later */
+	return 0;
+#endif
 	status = dev_state.dev_struct.controllerInterface->deviceControl(
 		dev_state.dev_struct.controllerHandle,
 		kUSB_DeviceControlPreSetDeviceAddress,
@@ -884,6 +905,8 @@ static void usb_isr_handler(void)
 	USB_DeviceEhciIsrFunction(&dev_state);
 #elif defined(CONFIG_USB_DC_NXP_LPCIP3511)
 	USB_DeviceLpcIp3511IsrFunction(&dev_state);
+#elif defined(CONFIG_USB_DC_NXP_KHCI)
+	USB_DeviceKhciIsrFunction(&dev_state);
 #endif
 }
 

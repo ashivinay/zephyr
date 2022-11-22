@@ -13,6 +13,13 @@
 /******************************************************************************
  * Definitions
  *****************************************************************************/
+/* KHCI instance count */
+#ifdef CONFIG_USB_DC_NXP_KHCI
+#define USB_DEVICE_CONFIG_KHCI (1U)
+/* The MAX buffer length for the KHCI DMA workaround.*/
+#define USB_DEVICE_CONFIG_KHCI_DMA_ALIGN_BUFFER_LENGTH (64U)
+#endif /* CONFIG_USB_DC_NXP_KHCI */
+
 /* EHCI instance count */
 #ifdef CONFIG_USB_DC_NXP_EHCI
 #define USB_DEVICE_CONFIG_EHCI (1U)

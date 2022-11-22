@@ -465,11 +465,12 @@
 		};
 
 		usbotg: usbd@40072000 {
-			compatible = "nxp,kinetis-usbd";
+			compatible = "nxp,mcux-usbd";
 			reg = <0x40072000 0x1000>;
 			interrupts = <53 1>;
 			interrupt-names = "usb_otg";
 			num-bidir-endpoints = <16>;
+			usb-controller-index = "Khci0";
 			status = "disabled";
 		};
 

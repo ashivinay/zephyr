@@ -136,6 +136,11 @@ choice USB_MCUX_CONTROLLER_TYPE
 	help
 	  Select the type of controller available in the SoC.
 
+config USB_DC_NXP_KHCI
+	bool "KHCI USB Device Controller"
+	help
+	  Kinetis KHCI USB Device Controller Driver.
+
 config USB_DC_NXP_EHCI
 	bool "MXRT EHCI USB Device Controller"
 	select NOCACHE_MEMORY if HAS_MCUX_CACHE

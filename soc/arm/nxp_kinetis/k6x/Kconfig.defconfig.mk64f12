@@ -18,4 +18,8 @@ config GPIO
 config SPI
 	default n
 
+choice USB_MCUX_CONTROLLER_TYPE
+	default USB_DC_NXP_KHCI
+endchoice
+
 endif # SOC_MK64F12
