@@ -15,3 +15,15 @@ void flexspi_clock_set_div(uint32_t value)
 
 	CLOCK_EnableClock(kCLOCK_FlexSpi);
 }
+
+inline uint32_t flexspi_clock_get_freq(void)
+{
+    uint32_t div;
+    uint32_t fre;
+
+    div = CLOCK_GetDiv(kCLOCK_FlexspiDiv);
+
+    fre = CLOCK_GetFreq(kCLOCK_Usb1PllPfd0Clk) / (div + 0x01U);
+
+    return fre;
+}

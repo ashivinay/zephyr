@@ -46,6 +46,7 @@ void imxrt_post_init_display_interface(void);
 #endif
 
 void flexspi_clock_set_div(uint32_t value);
+uint32_t flexspi_clock_get_freq(void);
 
 #ifdef __cplusplus
 }

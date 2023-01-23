@@ -23,7 +23,8 @@ int memc_flexspi_update_lut(const struct device *dev, uint32_t index,
 		const uint32_t *cmd, uint32_t count);
 
 int memc_flexspi_update_clock(const struct device *dev,
-		enum memc_flexspi_clock_t clock);
+		flexspi_device_config_t *device_config,
+		flexspi_port_t port, enum memc_flexspi_clock_t clock);
 
 int memc_flexspi_set_device_config(const struct device *dev,
 		const flexspi_device_config_t *device_config,
