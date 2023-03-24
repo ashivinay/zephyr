@@ -50,6 +50,84 @@ static uint32_t announced_cycles;
  */
 static uint32_t rollover_cycles;
 
+enum func_id {
+	MCUX_IMX_GPT_ISR = 0,
+	SYS_CLOCK_SET_TIMEOUT = 1,
+	SYS_CLOCK_ELAPSED = 2,
+	SYS_CLOCK_CYCLE_GET_32 = 3,
+	EXTERNAL = 4,
+};
+
+#define TRACE_SIZE 0x1000
+
+struct gpt_trace_record {
+	uint32_t idx;
+	uint32_t trace_id;
+	uint32_t now;
+	uint32_t announced;
+	uint32_t requested;
+	uint32_t new_load;
+	uint32_t rollover;
+} __packed;
+
+struct gpt_trace_data {
+	char header[10];
+	bool attached;
+	uint32_t trace_buf_size;
+	uint32_t trace_idx;
+	uint32_t cycle_per_tick;
+	uint32_t max_cycle;
+	uint32_t min_delay;
+	struct gpt_trace_record data[TRACE_SIZE];
+} __packed;
+
+
+__attribute__((__section__(".dtcm_data")))
+struct gpt_trace_data trace_data = {
+	.header = "GPT_TRACE",
+	.attached = false,
+	.trace_buf_size = TRACE_SIZE,
+	.trace_idx = 0,
+};
+
+int mcux_gpt_trace_init(const struct device *dev)
+{
+	trace_data.cycle_per_tick = CYC_PER_TICK;
+	trace_data.max_cycle = MAX_CYCLES;
+	trace_data.min_delay = MIN_DELAY;
+	memset(trace_data.data, 0, sizeof(struct gpt_trace_record) * TRACE_SIZE);
+	return 0;
+}
+
+void mcux_gpt_trace(enum func_id id, uint32_t now, uint32_t requested_ticks, uint32_t new_load)
+{
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].trace_id = id;
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].idx = trace_data.trace_idx;
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].now = now;
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].announced = announced_cycles;
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].requested = requested_ticks;
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].new_load = new_load;
+	trace_data.data[trace_data.trace_idx % TRACE_SIZE].rollover = rollover_cycles;
+
+	if ((trace_data.trace_idx % TRACE_SIZE) == (TRACE_SIZE - 1) && trace_data.attached) {
+		/* Flush the trace buffer. The debugger should break here to
+		 * dump the data
+		 */
+		__asm__ volatile (
+			"mov r0, #0\n"
+			"_gpt_break_sym:\n"
+			"cmp r0, #0\n"
+			"beq _gpt_break_sym"
+			: : : "r0");
+	}
+
+	trace_data.trace_idx++;
+}
+
+
+SYS_INIT(mcux_gpt_trace_init, PRE_KERNEL_2,
+	 CONFIG_SYSTEM_CLOCK_INIT_PRIORITY);
+
 /* GPT timer base address */
 static GPT_Type *base;
 
@@ -95,6 +173,7 @@ void mcux_imx_gpt_isr(const void *arg)
 		/* Update count of rolled over cycles */
 		rollover_cycles += CYC_PER_TICK;
 	}
+	mcux_gpt_trace(MCUX_IMX_GPT_ISR, now, 0, 0);
 
 	/* Announce progress to the kernel */
 	k_spin_unlock(&lock, key);
@@ -146,6 +225,8 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 	 */
 	next = CLAMP(next, 0, MAX_CYCLES);
 
+	mcux_gpt_trace(SYS_CLOCK_SET_TIMEOUT, now, ticks, next - 1);
+
 	GPT_SetOutputCompareValue(base, kGPT_OutputCompare_Channel2, next - 1);
 	k_spin_unlock(&lock, key);
 }
@@ -169,7 +250,9 @@ uint32_t sys_clock_elapsed(void)
 /* Get the number of elapsed hardware cycles of the clock */
 uint32_t sys_clock_cycle_get_32(void)
 {
-	return rollover_cycles + GPT_GetCurrentTimerCount(base);
+	uint32_t now = GPT_GetCurrentTimerCount(base);
+
+	return rollover_cycles + now;
 }
 
 /*
