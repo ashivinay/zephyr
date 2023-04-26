@@ -26,6 +26,18 @@ static int mcux_lpc_syscon_clock_control_on(const struct device *dev,
 	}
 #endif /* defined(CONFIG_CAN_MCUX_MCAN) */
 
+#if defined(CONFIG_SOC_SERIES_IMX_RT5XX) || defined(CONFIG_SOC_SERIES_IMX_RT6XX)
+	uint32_t clock_name = (uint32_t)sub_system;
+
+	if (clock_name == MCUX_OSC_32K_CLK) {
+		/* Enable the RTC */
+		CLOCK_EnableClock(kCLOCK_Rtc);
+		RTC->CTRL &= ~RTC_CTRL_SWRESET_MASK;
+		RTC->CTRL &= ~RTC_CTRL_RTC_OSC_PD_MASK;
+		CLOCK_EnableOsc32K(true);
+	}
+#endif
+
 	return 0;
 }
 
@@ -166,6 +178,9 @@ static int mcux_lpc_syscon_clock_control_get_subsys_rate(
 		*rate = CLOCK_GetDcPixelClkFreq();
 		break;
 #endif
+	case MCUX_OSC_32K_CLK:
+		*rate = CLOCK_GetOsc32KFreq();
+		break;
 	}
 
 	return 0;
