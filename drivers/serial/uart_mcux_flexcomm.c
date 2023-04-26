@@ -23,6 +23,10 @@
 #include <soc.h>
 #include <fsl_device_registers.h>
 #include <zephyr/drivers/pinctrl.h>
+#include <zephyr/pm/policy.h>
+#include <fsl_power.h>
+#include <zephyr/dt-bindings/clock/mcux_lpc_syscon_clock.h>
+
 
 struct mcux_flexcomm_config {
 	USART_Type *base;
@@ -44,7 +48,34 @@ struct mcux_flexcomm_data {
 #ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 	struct uart_config uart_config;
 #endif
+#ifdef CONFIG_PM
+	bool pm_state_lock_on;
+	bool tx_poll_stream_on;
+	bool tx_int_stream_on;
+#endif /* CONFIG_PM */
 };
+
+#ifdef CONFIG_PM
+static void mcux_flexcomm_pm_policy_state_lock_get(const struct device *dev)
+{
+	struct mcux_flexcomm_data *data = dev->data;
+
+	if (!data->pm_state_lock_on) {
+		data->pm_state_lock_on = true;
+		pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+	}
+}
+
+static void mcux_flexcomm_pm_policy_state_lock_put(const struct device *dev)
+{
+	struct mcux_flexcomm_data *data = dev->data;
+
+	if (data->pm_state_lock_on) {
+		data->pm_state_lock_on = false;
+		pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+	}
+}
+#endif /* CONFIG_PM */
 
 static int mcux_flexcomm_poll_in(const struct device *dev, unsigned char *c)
 {
@@ -68,6 +99,22 @@ static void mcux_flexcomm_poll_out(const struct device *dev,
 	/* Wait until space is available in TX FIFO */
 	while (!(USART_GetStatusFlags(config->base) & kUSART_TxFifoEmptyFlag)) {
 	}
+
+#ifdef CONFIG_PM
+	struct mcux_flexcomm_data *data = dev->data;
+	/*
+	 * Keep the part from entering low power mode until the transmission
+	 * completes. Set the power constraint, and enable the transmission
+	 * idle interrupt so we know when to release PM constraint
+	 */
+	if (!data->tx_poll_stream_on && !data->tx_int_stream_on) {
+		data->tx_poll_stream_on = true;
+		/* Enable transmission idle interrupt */
+		USART_EnableInterrupts(config->base,
+			kUSART_TxIdleInterruptEnable);
+		mcux_flexcomm_pm_policy_state_lock_get(dev);
+	}
+#endif
 
 	USART_WriteByte(config->base, c);
 }
@@ -137,6 +184,19 @@ static void mcux_flexcomm_irq_tx_enable(const struct device *dev)
 	const struct mcux_flexcomm_config *config = dev->config;
 	uint32_t mask = kUSART_TxLevelInterruptEnable;
 
+
+#ifdef CONFIG_PM
+	struct mcux_flexcomm_data *data = dev->data;
+
+	data->tx_poll_stream_on = false;
+	data->tx_int_stream_on = true;
+	/* Transmission complete interrupt no longer required */
+	USART_DisableInterrupts(config->base,
+		kUSART_TxIdleInterruptEnable);
+	/* Do not allow system to sleep while UART tx is ongoing */
+	mcux_flexcomm_pm_policy_state_lock_get(dev);
+#endif
+
 	USART_EnableInterrupts(config->base, mask);
 }
 
@@ -144,6 +204,16 @@ static void mcux_flexcomm_irq_tx_disable(const struct device *dev)
 {
 	const struct mcux_flexcomm_config *config = dev->config;
 	uint32_t mask = kUSART_TxLevelInterruptEnable;
+#ifdef CONFIG_PM
+	struct mcux_flexcomm_data *data = dev->data;
+
+	data->tx_int_stream_on = false;
+	/*
+	 * If transmission IRQ is no longer enabled,
+	 * transmission is complete. Release pm constraint.
+	 */
+	mcux_flexcomm_pm_policy_state_lock_put(dev);
+#endif
 
 	USART_DisableInterrupts(config->base, mask);
 }
@@ -239,6 +309,11 @@ static void mcux_flexcomm_irq_callback_set(const struct device *dev,
 	data->cb_data = cb_data;
 }
 
+#endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+
+
+#ifdef CONFIG_UART_MCUX_FLEXCOMM_ISR_SUPPORT
+
 static void mcux_flexcomm_isr(const struct device *dev)
 {
 	struct mcux_flexcomm_data *data = dev->data;
@@ -246,8 +321,26 @@ static void mcux_flexcomm_isr(const struct device *dev)
 	if (data->callback) {
 		data->callback(dev, data->cb_data);
 	}
+
+#ifdef CONFIG_PM
+
+	const struct mcux_flexcomm_config *config = dev->config;
+	uint32_t status = USART_GetStatusFlags(config->base);
+
+	if (status & kUSART_TxIdleFlag) {
+		if (data->tx_poll_stream_on) {
+			/* Transmission complete interrupt no longer required */
+			USART_DisableInterrupts(config->base,
+				kUSART_TxIdleInterruptEnable);
+			/* Poll transmission complete. Allow system to sleep */
+			mcux_flexcomm_pm_policy_state_lock_put(dev);
+		}
+		USART_ClearStatusFlags(config->base, kUSART_TxIdleFlag);
+	}
+#endif /* CONFIG_PM */
 }
-#endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+
+#endif /* CONFIG_UART_MCUX_FLEXCOMM_ISR_SUPPORT*/
 
 #ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 static int mcux_flexcomm_uart_configure(const struct device *dev, const struct uart_config *cfg)
@@ -261,6 +354,7 @@ static int mcux_flexcomm_uart_configure(const struct device *dev, const struct u
 	usart_data_len_t data_bits = kUSART_8BitsPerChar;
 	bool nine_bit_mode = false;
 	uint32_t clock_freq;
+	status_t ret;
 
 	/* Set up structure to reconfigure UART */
 	USART_GetDefaultConfig(&usart_config);
@@ -321,11 +415,21 @@ static int mcux_flexcomm_uart_configure(const struct device *dev, const struct u
 	clock_control_get_rate(config->clock_dev,
 		config->clock_subsys, &clock_freq);
 
+	if (config->clock_subsys == (clock_control_subsys_t)MCUX_OSC_32K_CLK) {
+		/* Switch USART to 32KHz clock */
+		usart_config.enableMode32k = true;
+	}
+
 	/* Handle 9 bit mode */
 	USART_Enable9bitMode(config->base, nine_bit_mode);
 
 	/* Reconfigure UART */
-	USART_Init(config->base, &usart_config, clock_freq);
+	ret = USART_Init(config->base, &usart_config, clock_freq);
+	if (ret == kStatus_USART_BaudrateNotSupport) {
+		return -ENOTSUP;
+	} else if (ret != kStatus_Success) {
+		return -EIO;
+	}
 
 	/* Update driver device data */
 	uart_config->parity = cfg->parity;
@@ -357,6 +461,7 @@ static int mcux_flexcomm_init(const struct device *dev)
 	usart_parity_mode_t parity_mode;
 	uint32_t clock_freq;
 	int err;
+	status_t ret;
 
 	err = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
 	if (err) {
@@ -367,6 +472,10 @@ static int mcux_flexcomm_init(const struct device *dev)
 		return -ENODEV;
 	}
 
+	/* Enable UART clock */
+	if (clock_control_on(config->clock_dev, config->clock_subsys)) {
+		return -EINVAL;
+	}
 	/* Get the clock frequency */
 	if (clock_control_get_rate(config->clock_dev, config->clock_subsys,
 				   &clock_freq)) {
@@ -387,6 +496,11 @@ static int mcux_flexcomm_init(const struct device *dev)
 	usart_config.parityMode = parity_mode;
 	usart_config.baudRate_Bps = config->baud_rate;
 
+	if (config->clock_subsys == (clock_control_subsys_t)MCUX_OSC_32K_CLK) {
+		/* Switch USART to 32KHz clock */
+		usart_config.enableMode32k = true;
+	}
+
 #ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 	cfg->baudrate = config->baud_rate;
 	cfg->parity = config->parity;
@@ -396,10 +510,21 @@ static int mcux_flexcomm_init(const struct device *dev)
 	cfg->flow_ctrl = UART_CFG_FLOW_CTRL_NONE;
 #endif /* CONFIG_UART_USE_RUNTIME_CONFIGURE */
 
-	USART_Init(config->base, &usart_config, clock_freq);
+	ret = USART_Init(config->base, &usart_config, clock_freq);
+	if (ret == kStatus_USART_BaudrateNotSupport) {
+		return -ENOTSUP;
+	} else if (ret != kStatus_Success) {
+		return -EIO;
+	}
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_MCUX_FLEXCOMM_ISR_SUPPORT
 	config->irq_config_func(dev);
+#endif
+
+#ifdef CONFIG_PM
+	data->pm_state_lock_on = false;
+	data->tx_poll_stream_on = false;
+	data->tx_int_stream_on = false;
 #endif
 
 	return 0;
@@ -432,7 +557,7 @@ static const struct uart_driver_api mcux_flexcomm_driver_api = {
 };
 
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_MCUX_FLEXCOMM_ISR_SUPPORT
 #define UART_MCUX_FLEXCOMM_CONFIG_FUNC(n)				\
 	static void mcux_flexcomm_config_func_##n(const struct device *dev)	\
 	{								\
@@ -441,6 +566,7 @@ static const struct uart_driver_api mcux_flexcomm_driver_api = {
 			    mcux_flexcomm_isr, DEVICE_DT_INST_GET(n), 0);\
 									\
 		irq_enable(DT_INST_IRQN(n));				\
+		IF_ENABLED(CONFIG_PM, (EnableDeepSleepIRQ(DT_INST_IRQN(n)))); \
 	}
 #define UART_MCUX_FLEXCOMM_IRQ_CFG_FUNC_INIT(n)				\
 	.irq_config_func = mcux_flexcomm_config_func_##n
