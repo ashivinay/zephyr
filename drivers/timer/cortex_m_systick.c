@@ -10,6 +10,7 @@
 #include <zephyr/arch/arm/aarch32/cortex_m/cmsis.h>
 #include <zephyr/irq.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/kernel.h>
 
 #define COUNTER_MAX 0x00ffffff
 #define TIMER_STOPPED 0xff000000
@@ -115,11 +116,62 @@ static uint32_t elapsed(void)
 	return (last_load - val2) + overflow_cyc;
 }
 
+enum trace_type {
+	ANNOUNCEMENT = 0U,
+	USER = 1U,
+	ELAPSED = 2U,
+	CURR_TICK = 3U,
+	TIMEOUT = 4U,
+	LOAD = 5U,
+	VAL = 6U,
+};
+
+struct timer_trace {
+	enum trace_type type;
+	int32_t val1;
+};
+
+#define TRACE_SIZE 256
+
+struct timer_trace traces[TRACE_SIZE];
+static uint32_t trace_idx = 0;
+
+/* 
+ * Helper function. If the PC is set to this function while in a debugger,
+ * the user can dump the "traces" buffer to the serial console
+ */
+void dump_traces(void)
+{
+	char* estrings[] = {
+		"ANNOUNCEMENT",
+		"USER",
+		"ELAPSED",
+		"CURR_TICK",
+		"TIMEOUT",
+		"LOAD",
+		"VAL",
+	};
+	printk("\n| Event IDX | Type | Value | Details |\n");
+	printk("--------------|------|-------|--------\n");
+	for (uint32_t i = 0; i < trace_idx; i++) {
+		printk("%d | %s | %d |       |\n", i,
+			estrings[traces[i].type], traces[i].val1);
+	}
+}
+
+void sys_clock_trace(uint32_t type, uint32_t val)
+{
+	traces[trace_idx].type = type;
+	traces[trace_idx].val1 = val;
+	trace_idx = ((trace_idx + 1) % TRACE_SIZE);
+}
+
+
 /* Callout out of platform assembly, not hooked via IRQ_CONNECT... */
 void sys_clock_isr(void *arg)
 {
 	ARG_UNUSED(arg);
-	uint32_t dticks;
+	volatile uint32_t dticks;
 
 	/* Update overflow_cyc and clear COUNTFLAG by invoking elapsed() */
 	elapsed();
@@ -145,6 +197,7 @@ void sys_clock_isr(void *arg)
 
 		dticks = (cycle_count - announced_cycles) / CYC_PER_TICK;
 		announced_cycles += dticks * CYC_PER_TICK;
+		sys_clock_trace(ANNOUNCEMENT, dticks);
 		sys_clock_announce(dticks);
 	} else {
 		sys_clock_announce(1);
@@ -167,6 +220,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 	}
 
 #if defined(CONFIG_TICKLESS_KERNEL)
+	sys_clock_trace(TIMEOUT, ticks);
 	uint32_t delay;
 	uint32_t val1, val2;
 	uint32_t last_load_ = last_load;
@@ -208,6 +262,8 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 			last_load = delay;
 		}
 	}
+	sys_clock_trace(LOAD, last_load - 1);
+	sys_clock_trace(VAL, SysTick->VAL);
 
 	val2 = SysTick->VAL;
 
@@ -243,6 +299,7 @@ uint32_t sys_clock_elapsed(void)
 	uint32_t cyc = elapsed() + cycle_count - announced_cycles;
 
 	k_spin_unlock(&lock, key);
+	sys_clock_trace(ELAPSED, cyc / CYC_PER_TICK);
 	return cyc / CYC_PER_TICK;
 }
 
@@ -271,13 +328,18 @@ static int sys_clock_driver_init(void)
 {
 
 	NVIC_SetPriority(SysTick_IRQn, _IRQ_PRIO_OFFSET);
-	last_load = CYC_PER_TICK - 1;
+	last_load = CYC_PER_TICK;
 	overflow_cyc = 0U;
-	SysTick->LOAD = last_load;
+	SysTick->LOAD = last_load - 1;
 	SysTick->VAL = 0; /* resets timer to last_load */
+	sys_clock_trace(VAL, SysTick->VAL);
 	SysTick->CTRL |= (SysTick_CTRL_ENABLE_Msk |
 			  SysTick_CTRL_TICKINT_Msk |
 			  SysTick_CTRL_CLKSOURCE_Msk);
+	/* dummy call of dump_traces here, to force it to be linked in */
+	if (SysTick->LOAD == 0) {
+		dump_traces();
+	}
 	return 0;
 }
 

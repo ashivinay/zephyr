@@ -15,6 +15,8 @@
 
 static struct k_spinlock lock;
 
+extern void sys_clock_trace(uint32_t type, uint32_t val);
+
 /**
  * @brief Handle expiration of a kernel timer object.
  *
@@ -69,6 +71,7 @@ void z_timer_expiration_handler(struct _timeout *t)
 		 */
 		next = K_TIMEOUT_ABS_TICKS(k_uptime_ticks() + 1 + next.ticks);
 #endif
+		sys_clock_trace(0x1, Z_TICK_ABS(next.ticks));
 		z_add_timeout(&timer->timeout, z_timer_expiration_handler,
 			      next);
 	}

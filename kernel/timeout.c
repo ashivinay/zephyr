@@ -190,6 +190,9 @@ int32_t z_get_next_timeout_expiry(void)
 	return ret;
 }
 
+
+extern void sys_clock_trace(uint32_t type, uint32_t val);
+
 void sys_clock_announce(int32_t ticks)
 {
 	k_spinlock_key_t key = k_spin_lock(&timeout_lock);
@@ -220,6 +223,7 @@ void sys_clock_announce(int32_t ticks)
 		remove_timeout(t);
 
 		k_spin_unlock(&timeout_lock, key);
+		sys_clock_trace(0x3, curr_tick);
 		t->fn(t);
 		key = k_spin_lock(&timeout_lock);
 		announce_remaining -= dt;
@@ -231,6 +235,7 @@ void sys_clock_announce(int32_t ticks)
 
 	curr_tick += announce_remaining;
 	announce_remaining = 0;
+	sys_clock_trace(0x3, curr_tick);
 
 	sys_clock_set_timeout(next_timeout(), false);
 

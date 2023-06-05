@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
+#include <zephyr/drivers/gpio.h>
 
 #include <zephyr/kernel.h>
 
@@ -24,6 +25,8 @@ static struct k_sem periodic_sem;
  * auto-restart feature based on its period argument.
  */
 
+const struct device *gpio2 = DEVICE_DT_GET(DT_NODELABEL(gpio2));
+
 static void timer_period_fn(struct k_timer *t)
 {
 	uint64_t curr_cycle;
@@ -35,8 +38,14 @@ static void timer_period_fn(struct k_timer *t)
 #endif
 	periodic_data[periodic_idx] = curr_cycle;
 
+	gpio_pin_toggle(gpio2, 6);
 	if (periodic_idx == 0) {
 		periodic_start = curr_cycle;
+	} else {
+		if (periodic_data[periodic_idx] -
+		    periodic_data[periodic_idx - 1] < 450000) {
+			__asm volatile ("bkpt");
+		}
 	}
 	++periodic_idx;
 	if (periodic_idx >= ARRAY_SIZE(periodic_data)) {
@@ -46,10 +55,17 @@ static void timer_period_fn(struct k_timer *t)
 	}
 }
 
+uint32_t timer_init_period;
+extern void sys_clock_trace(uint32_t type, uint32_t val);
+
 static void collect_timer_period_time_samples(void)
 {
+	gpio_pin_configure(gpio2, 6, GPIO_OUTPUT_INACTIVE);
 	k_timer_init(&periodic_timer, timer_period_fn, NULL);
 	k_timer_start(&periodic_timer, K_NO_WAIT, K_USEC(CONFIG_TIMER_TEST_PERIOD));
+	timer_init_period = periodic_timer.timeout.dticks;
+	sys_clock_trace(0x1, 0xDEAD);
+	TC_PRINT("Timer period: %lli\n", timer_init_period);
 }
 
 /*
