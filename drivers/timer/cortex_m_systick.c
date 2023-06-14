@@ -136,7 +136,7 @@ struct timer_trace {
 struct timer_trace traces[TRACE_SIZE];
 static uint32_t trace_idx = 0;
 
-/* 
+/*
  * Helper function. If the PC is set to this function while in a debugger,
  * the user can dump the "traces" buffer to the serial console
  */

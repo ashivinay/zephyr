@@ -83,6 +83,7 @@ static int32_t next_timeout(void)
 void z_add_timeout(struct _timeout *to, _timeout_func_t fn,
 		   k_timeout_t timeout)
 {
+	uint32_t pc;
 	if (K_TIMEOUT_EQ(timeout, K_FOREVER)) {
 		return;
 	}
@@ -103,6 +104,14 @@ void z_add_timeout(struct _timeout *to, _timeout_func_t fn,
 
 			to->dticks = MAX(1, ticks);
 		} else {
+			__asm volatile (
+				"mov %0, pc"
+				: "=r" (pc));
+			sys_clock_trace(0x1, pc);
+			/* Set GPIO2_6 high here, to profile time until calling
+			 * next_timeout()
+			 */
+			GPIO2->DR_SET= BIT(6);
 			to->dticks = timeout.ticks + 1 + elapsed();
 		}
 
@@ -121,6 +130,12 @@ void z_add_timeout(struct _timeout *to, _timeout_func_t fn,
 
 		if (to == first()) {
 			sys_clock_set_timeout(next_timeout(), false);
+			/* Clear GPIO2_6 signal */
+			GPIO2->DR_CLEAR= BIT(6);
+			__asm volatile (
+				"mov %0, pc"
+				: "=r" (pc));
+			sys_clock_trace(0x1, pc);
 		}
 	}
 }

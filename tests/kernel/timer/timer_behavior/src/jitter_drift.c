@@ -38,7 +38,6 @@ static void timer_period_fn(struct k_timer *t)
 #endif
 	periodic_data[periodic_idx] = curr_cycle;
 
-	gpio_pin_toggle(gpio2, 6);
 	if (periodic_idx == 0) {
 		periodic_start = curr_cycle;
 	} else {
