@@ -3971,6 +3971,55 @@
 	(DT_INST_FOREACH_STATUS_OKAY_VARGS(DT_INST_NODE_HAS_PROP_AND_OR, prop) 0)
 
 /**
+ * @brief Check if any `DT_DRV_COMPAT` node with status `okay` has a given
+ *        enum property with a given index selected.
+ *
+ * @param prop lowercase-and-underscores property name
+ * @param val zero based enum index
+ *
+ * Example devicetree overlay:
+ *
+ * @code{.dts}
+ *     &i2c0 {
+ *         sensor0: sensor@0 {
+ *             compatible = "vnd,some-sensor";
+ *             status = "okay";
+ *             reg = <0>;
+ *             foo = "zero";
+ *             bar = "zero";
+ *         };
+ *
+ *         sensor1: sensor@1 {
+ *             compatible = "vnd,some-sensor";
+ *             status = "okay";
+ *             reg = <1>;
+ *             foo = "two";
+ *         };
+ *
+ *         sensor2: sensor@2 {
+ *             compatible = "vnd,some-sensor";
+ *             status = "disabled";
+ *             reg = <2>;
+ *             bar = "two";
+ *         };
+ *     };
+ * @endcode
+ *
+ * Example usage:
+ *
+ * @code{.c}
+ *     #define DT_DRV_COMPAT vnd_some_sensor
+ *
+ *     DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(foo, 0) // 1
+ *     DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(foo, 2) // 1
+ *     DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(bar, 0) // 1
+ *     DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(bar, 2) // 0
+ * @endcode
+ */
+#define DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(prop, val) \
+	(DT_INST_FOREACH_STATUS_OKAY_VARGS(DT_INST_NODE_HAS_ENUM_IDX_EQUAL_AND_OR, prop, val) 0)
+
+/**
  * @brief Call @p fn on all nodes with compatible `DT_DRV_COMPAT`
  *        and status `okay`
  *
@@ -4260,6 +4309,11 @@
 /** @brief Helper macro to OR multiple has property checks in a loop macro */
 #define DT_INST_NODE_HAS_PROP_AND_OR(inst, prop) \
 	DT_INST_NODE_HAS_PROP(inst, prop) ||
+/** @brief Helper macro to OR multiple has property equal checks in a loop macro */
+#define DT_INST_NODE_HAS_ENUM_IDX_EQUAL_AND_OR(inst, prop, val) \
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, prop), \
+		(IS_EQ(DT_INST_ENUM_IDX(inst, prop), val)), \
+		(0)) ||
 
 /**
  * @def DT_U64_C
