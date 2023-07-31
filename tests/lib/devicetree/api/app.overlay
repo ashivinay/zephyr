@@ -77,6 +77,12 @@
 			val = "two";
 		};
 
+		test_enum_2: enum-8 {
+			compatible = "vnd,enum-holder";
+			status = "disabled";
+			val = "one";
+		};
+
 		test_enum_default_0: enum-2 {
 			compatible = "vnd,enum-required-false-holder";
 			val = "one";

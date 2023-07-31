@@ -196,6 +196,17 @@ ZTEST(devicetree_api, test_any_inst_prop)
 	zassert_equal(DT_ANY_INST_HAS_PROP_STATUS_OKAY(does_not_exist), 0, "");
 }
 
+#undef DT_DRV_COMPAT
+#define DT_DRV_COMPAT vnd_enum_holder
+ZTEST(devicetree_api, test_any_inst_has_enum_idx_equal)
+{
+	zassert_equal(DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(val, 0), 1, "");
+	zassert_equal(DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(val, 1), 0, "");
+	zassert_equal(DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(val, 2), 1, "");
+	zassert_equal(DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(val, 0xdead), 0, "");
+	zassert_equal(DT_ANY_INST_HAS_ENUM_IDX_EQUAL_STATUS_OKAY(does_not_exist, 0), 0, "");
+}
+
 ZTEST(devicetree_api, test_default_prop_access)
 {
 	/*
