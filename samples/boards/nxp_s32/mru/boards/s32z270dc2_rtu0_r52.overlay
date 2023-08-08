@@ -1,0 +1,19 @@
+/*
+ * Copyright 2023 NXP
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+&mru0 {
+	rx-channels = <1>;
+	status = "okay";
+};
+
+/*
+ * The remote would normally set status "okay" to the receiver MRU node
+ * so that it can transmit messages on it, for example:
+ *
+ *  &mru0 {
+ *      status = "okay";
+ *  };
+ */

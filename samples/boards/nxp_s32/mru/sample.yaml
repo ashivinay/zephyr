@@ -1,0 +1,15 @@
+sample:
+  name: NXP S32 MRU sample
+tests:
+  sample.boards.nxp_s32.mru:
+    platform_allow: s32z270dc2_rtu0_r52
+    tags: mbox
+    harness: console
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "Ping on channel 0, tx data is \\d+"
+        - "Pong on channel 0, rx data is \\d+"
+        - "Ping on channel 0, tx data is \\d+"
+        - "Pong on channel 0, rx data is \\d+"
