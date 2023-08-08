@@ -23,9 +23,9 @@ properties:
 
   filter-prescaler:
     type: int
+    enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     description: |
       Setting the prescaler which selects the clock for all digital filters.
-      Valid range: 0 - 15.
 
   interrupt-names:
     description: |
@@ -39,32 +39,32 @@ properties:
 
 child-binding:
   description: |
-    NXP S32 SIUL2 External Interrupt line configuration. For each
-    interrupt line that has specific requirements about digital
-    glitch filter, a node using this binding must be added, the
-    name must be "line_<line_number>". For example:
+    NXP S32 SIUL2 External Interrupt line configuration. Specific filter
+    requirements for each interrupt line can be specified by adding a child node
+    to the interrupt controller, labeled `line_<line_number>`. For example:
 
       line_0: line_0 {
-          filter-enable;
           filter-counter = <5>;
       };
 
-    If the controller has no child node, the digital filter will be
-    disabled for all external interrupt lines.
+    This will enable a digital filter counter on the corresponding interrupt
+    pads to filter out glitches on the inputs. The digital filter will be
+    disabled for interrupt lines without specified configuration node.
 
   properties:
-    filter-enable:
-      type: boolean
-      required: true
-      description: |
-        Enable digital glitch filter to filter out glitches on the input pad.
-
-    filter-counter:
+    max-filter-counter:
       type: int
       required: true
+      enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
       description: |
-        Configuring the filter counter associated with digital glitch filter.
-        Valid range: 0 - 15.
+        Maximum Interrupt Filter Counter setting. This value configures the
+        filter counter associated with the digital glitch filter.
+        - A value of 0 to 2, sets the filter as an all pass filter.
+        - A value of 3 to 15, sets the filter period to (TCK * MAXCNT + n * TCK)
+          where:
+          * n can be in the range 0 to 4, and accounts for the uncertainty
+            factor in filter period calculation.
+          * TCK is the prescaled filter clock period.
 
 interrupt-cells:
   - gpio-pin

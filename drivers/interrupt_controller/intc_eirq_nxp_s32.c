@@ -134,17 +134,22 @@ static int eirq_nxp_s32_init(const struct device *dev)
 		eirq_nxp_s32_callback(dev, line);						\
 	}
 
+/*
+ * Note: interrupt edge selection is set here to a value different than SIUL2_ICU_DISABLE
+ * so that the HAL initializes the rest of the parameters, otherwise these will be skipped.
+ * The effective interrupt edge selection is done as usual through Zephyr's GPIO API.
+ * All external interrupts will be masked at initialization regardless of this setting.
+ */
 #define EIRQ_NXP_S32_CHANNEL_CONFIG(idx, n)							\
 	{											\
 		.hwChannel = idx,								\
-		.digFilterEn = DT_PROP_OR(DT_CHILD(EIRQ_NXP_S32_NODE(n), line_##idx),		\
-						filter_enable, 0),				\
+		.digFilterEn = DT_NODE_EXISTS(DT_CHILD(EIRQ_NXP_S32_NODE(n), line_##idx)),	\
 		.maxFilterCnt = DT_PROP_OR(DT_CHILD(EIRQ_NXP_S32_NODE(n), line_##idx),		\
-						filter_counter, 0),				\
+					   max_filter_counter, 0U),				\
 		.intSel = SIUL2_ICU_IRQ,							\
-		.intEdgeSel = SIUL2_ICU_DISABLE,						\
-		.callback = NULL,								\
+		.intEdgeSel = SIUL2_ICU_BOTH_EDGES,						\
 		.Siul2ChannelNotification = nxp_s32_icu_##n##_eirq_line_##idx##_callback,	\
+		.callback = NULL,								\
 		.callbackParam = 0U								\
 	}
 
@@ -155,8 +160,7 @@ static int eirq_nxp_s32_init(const struct device *dev)
 
 #define EIRQ_NXP_S32_INSTANCE_CONFIG(n)								\
 	static const Siul2_Icu_Ip_InstanceConfigType eirq_##n##_instance_nxp_s32_cfg = {	\
-		.intFilterClk = DT_PROP_OR(EIRQ_NXP_S32_NODE(n),				\
-						filter_prescaler, (0)),				\
+		.intFilterClk = DT_PROP_OR(EIRQ_NXP_S32_NODE(n), filter_prescaler, 0U),		\
 		.altIntFilterClk = 0U,								\
 	}
 
@@ -216,7 +220,7 @@ static int eirq_nxp_s32_init(const struct device *dev)
 		NULL,										\
 		&eirq_nxp_s32_data_##n,								\
 		&eirq_nxp_s32_conf_##n,								\
-		PRE_KERNEL_1,									\
+		PRE_KERNEL_2,									\
 		CONFIG_INTC_INIT_PRIORITY,							\
 		NULL);										\
 	static int eirq_nxp_s32_init##n(const struct device *dev)				\
