@@ -269,7 +269,7 @@ static int dma_mcux_lpc_configure(const struct device *dev, uint32_t channel,
 	struct dma_block_config *block_config;
 	uint32_t virtual_channel;
 	uint8_t otrig_index;
-	uint8_t src_inc, dst_inc;
+	uint8_t src_inc = 0, dst_inc = 0;
 	bool is_periph = true;
 	uint8_t width;
 	uint32_t max_xfer_bytes;
@@ -289,6 +289,15 @@ static int dma_mcux_lpc_configure(const struct device *dev, uint32_t channel,
 	 */
 	assert(config->dest_data_size == config->source_data_size);
 	width = config->dest_data_size;
+
+	/* If skip is set on both source and destination
+	 * then skip by the same amount on both sides
+	 */
+	if (block_config->source_gather_en && block_config->dest_scatter_en) {
+		assert(block_config->source_gather_interval ==
+		       block_config->dest_scatter_interval);
+	}
+
 	max_xfer_bytes = NXP_LPC_DMA_MAX_XFER * width;
 
 	/*
@@ -328,16 +337,60 @@ static int dma_mcux_lpc_configure(const struct device *dev, uint32_t channel,
 	switch (config->channel_direction) {
 	case MEMORY_TO_MEMORY:
 		is_periph = false;
-		src_inc = 1;
-		dst_inc = 1;
+		if (block_config->source_gather_en) {
+			src_inc = block_config->source_gather_interval / width;
+			/* The current controller only supports incrementing the
+			 * source and destination upto 4 time transfer width
+			 */
+			if ((src_inc > 4) || (src_inc == 3)) {
+				return -EINVAL;
+			}
+		} else {
+			src_inc = 1;
+		}
+		if (block_config->dest_scatter_en) {
+			dst_inc = block_config->dest_scatter_interval / width;
+			/* The current controller only supports incrementing the
+			 * source and destination upto 4 time transfer width
+			 */
+			if ((dst_inc > 4) || (dst_inc == 3)) {
+				return -EINVAL;
+			}
+		} else {
+			dst_inc = 1;
+		}
 		break;
 	case MEMORY_TO_PERIPHERAL:
-		src_inc = 1;
+		/* Set the source increment value */
+		if (block_config->source_gather_en) {
+			src_inc = block_config->source_gather_interval / width;
+			/* The current controller only supports incrementing the
+			 * source and destination upto 4 time transfer width
+			 */
+			if ((src_inc > 4) || (src_inc == 3)) {
+				return -EINVAL;
+			}
+		} else {
+			src_inc = 1;
+		}
+
 		dst_inc = 0;
 		break;
 	case PERIPHERAL_TO_MEMORY:
 		src_inc = 0;
-		dst_inc = 1;
+
+		/* Set the destination increment value */
+		if (block_config->dest_scatter_en) {
+			dst_inc = block_config->dest_scatter_interval / width;
+			/* The current controller only supports incrementing the
+			 * source and destination upto 4 time transfer width
+			 */
+			if ((dst_inc > 4) || (dst_inc == 3)) {
+				return -EINVAL;
+			}
+		} else {
+			dst_inc = 1;
+		}
 		break;
 	default:
 		LOG_ERR("not support transfer direction");
