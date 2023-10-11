@@ -23,5 +23,14 @@ CONFIG_PINCTRL=y
 CONFIG_SERIAL=y
 CONFIG_WATCHDOG=y
 
+# Sensor drivers
+CONFIG_SENSOR=y
+
 # Serial console
 CONFIG_CONSOLE=y
+
+# Emios Enable for Quadrature Motor Position
+CONFIG_NXP_S32_EMIOS=y
+
+# Timing functions
+CONFIG_TIMING_FUNCTIONS=y

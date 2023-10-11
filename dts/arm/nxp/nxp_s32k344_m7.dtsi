@@ -289,6 +289,14 @@
 			};
 		};
 
+		flexio0: flexio@40324000 {
+			compatible = "nxp,mcux-flexio";
+			reg = <0x40324000 0x4000>;
+			//interrupts = <141 0>;
+			clocks = <&clock NXP_S32_FLEXIO0_CLK>;
+			status = "disabled";
+		};
+
 		lpuart0: uart@40328000 {
 			compatible = "nxp,kinetis-lpuart";
 			reg = <0x40328000 0x4000>;

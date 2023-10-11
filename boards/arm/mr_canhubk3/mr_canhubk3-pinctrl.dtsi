@@ -288,4 +288,16 @@
 			output-enable;
 		};
 	};
+
+  qdec_s32k: qdec_s32k {
+    group1 {
+      pinmux = <PTB2_TRGMUX_IN3>,
+        <PTB3_TRGMUX_IN2>;
+      input-enable;
+    };
+    group2 {
+      pinmux = <PTC12_EMIOS_0_CH22_X_I>;
+      input-enable;
+    };
+  };
 };
