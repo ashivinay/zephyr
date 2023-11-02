@@ -88,6 +88,7 @@
     emios_inst = <0>;
     counts-per-revolution = <1370>;
     motor-to-gearbox-ratio = <37>;
+    emios-channels = <6 7 22>;
     filter-sample-period = <5>;
     encoder-pulses = <16>;
   };

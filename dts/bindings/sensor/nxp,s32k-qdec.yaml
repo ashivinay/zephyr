@@ -19,6 +19,11 @@ properties:
     description: |
       This is the ratio between the motor and the gearbox.
 
+  emios-channels:
+    type: array
+    description: |
+      This is the array containing emios channel numbers used by the qdec.
+
   trgmux_inst:
     type: int
     description: |
