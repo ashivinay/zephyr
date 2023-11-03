@@ -1,33 +1,49 @@
 # Copyright (c) 2022, Prevas A/S
 # SPDX-License-Identifier: Apache-2.0
 
-description: NXP S32 QDEC
+description: |
+  Quadrature Decoder driver which processes encoder signals to determine MR-BUGGY3 displacement
+
+  with cooperation of S32K344 - eMIOS, TRGMUX and LCU modules.
+
+  The sensor qdec application can be used for testing this driver.
+
+  The following example uses TRGMUX IN2 and IN3 to connect to LCU1 LC0 I0 and I1.
+
+  LCU1 LC0 O2 and O3 connect to eMIOS0 CH6(Clockwise rotation) and
+
+  CH7(Counter Clockwise rotation) via TRGMUX_INT_OUT37 and TRGMUX_INT_OUT38
+
+  micro-ticks-per-rev is set as per BUGGY3 gearbox reduction.
+
+  lcu filters are set to capture maximum speed sensitivity and avoid channel noise.
+
+  qdec0: qdec0 {
+    compatible = "nxp,qdec-s32k";
+    pinctrl-0 = <&qdec_s32k>;
+    pinctrl-names = "default";
+    status = "okay";
+    lcu_inst = <1>;
+    emios_inst = <0>;
+    micro-ticks-per-rev = <685440000>;
+    lcu-rise-fall-filter = <5>;
+    lcu-glitch-filter = <2>;
+    emios-channels = <6 7>;
+    trgmux-maps = < 54 3 >, /* TRGMUX_OUT_37 <-> eMIOS0_CH6 */
+        < 55 4 >; /* TRGMUX_OUT_38 <-> eMIOS0_CH7 */
+  };
+
 
 compatible: "nxp,qdec-s32k"
 
 include: [pinctrl-device.yaml, sensor-device.yaml]
 
 properties:
-  counts-per-revolution:
+  micro-ticks-per-rev:
     type: int
     description: |
-      This is a number that is used to determine how many revolutions
+      This is a number that is used to determine how many revolutions * 1000000
       were done based on the current counter's value.
-
-  motor-to-gearbox-ratio:
-    type: int
-    description: |
-      This is the ratio between the motor and the gearbox.
-
-  emios-channels:
-    type: array
-    description: |
-      This is the array containing emios channel numbers used by the qdec.
-
-  trgmux_inst:
-    type: int
-    description: |
-      This gives the hardware instance of TRGMUX module.
 
   lcu_inst:
     type: int
@@ -39,33 +55,26 @@ properties:
     description: |
       This gives the hardware instance of eMIOS module.
 
-  encoder-pulses:
+  lcu-rise-fall-filter:
     type: int
     description: |
-      This gives the Quadrature Encoder Phase A and B Pulses per revolution.
+      This filter specifies the delay in terms of CORE_CLK between the input and the output line of LC.
+      We use this delay to genarate short pulses at the rising and falling edges of input pulse.
 
-  single-phase-mode:
-    type: boolean
-    description: |
-      Bypass the quadrature decoder. A positive transition of the PHASEA input
-      generates a count signal. The PHASEB input and the REV bit control the
-      counter direction.
-
-  filter-count:
-    type: int
-    enum: [0, 1, 2, 3, 4, 5, 6, 7]
-    description: |
-      The number of consecutive samples that must agree prior to the input
-      filter accepting an input transition. A value of 0 represents 3
-      samples. A value of 7 represents 10 samples.
-
-  filter-sample-period:
+  lcu-glitch-filter:
     type: int
     description: |
-      The sampling period (in IPBus clock cycles) of the decoder input signals.
-      Each input is sampled multiple times at the rate specified by the Filter
-      Sample Period. If FILT_PER is 0 (default), then the input filter is
-      bypassed. Bypassing the digital filter enables the position/position
-      difference counters to operate with count rates up to the IPBus
-      frequency. Turning on the input filter introduces a latency of:
-      ((FILT_CNT + 3) * FILT_PER) FILT clock cycles + 2 IPBus clock periods.
+      This filter specifies the minimum width of the LC output pulse in terms of CORE_CLK.
+      Any pulse less than this value will not be reflected on the output of LCU module.
+
+  emios-channels:
+    type: array
+    description: |
+      This is the array containing 2 emios channel TypeG numbers used by the qdec.
+      See Table 342 in S32K3XXRM for more information
+
+  trgmux-maps:
+    type: array
+    description: |
+      Trgmux input and output mappings. Input is followed by the output.
+      See S32K3XXRM S32K3XX_IOMUX.xlsx for more information

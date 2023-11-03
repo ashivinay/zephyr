@@ -78,20 +78,20 @@
 		};
 	};
 
-  qdec0: qdec0 {
-    compatible = "nxp,qdec-s32k";
-    pinctrl-0 = <&qdec_s32k>;
-    pinctrl-names = "default";
-    status = "okay";
-    trgmux_inst = <0>;
-    lcu_inst = <1>;
-    emios_inst = <0>;
-    counts-per-revolution = <1370>;
-    motor-to-gearbox-ratio = <37>;
-    emios-channels = <6 7 22>;
-    filter-sample-period = <5>;
-    encoder-pulses = <16>;
-  };
+	qdec0: qdec0 {
+		compatible = "nxp,qdec-s32k";
+		pinctrl-0 = <&qdec_s32k>;
+		pinctrl-names = "default";
+		status = "okay";
+		lcu_inst = <1>;
+		emios_inst = <0>;
+		micro-ticks-per-rev = <685440000>;
+		lcu-rise-fall-filter = <5>;
+		lcu-glitch-filter = <2>;
+		emios-channels = <6 7>;
+		trgmux-maps = < 54 3 >, /* TRGMUX_OUT_37 <-> eMIOS0_CH6 */
+		    < 55 4 >; /* TRGMUX_OUT_38 <-> eMIOS0_CH7 */
+	};
 
 	gpio_keys {
 		compatible = "gpio-keys";
@@ -174,15 +174,25 @@
 	};
 };
 
+&gpioa_l {
+	status = "okay";
+};
+
 &gpioa_h {
 	status = "okay";
 };
 
-&gpioe_l {
+&gpiob_l {
 	status = "okay";
 };
 
-/* Enable gpio to control the CAN transceivers */
+&gpiob_h {
+	status = "okay";
+};
+
+&gpioc_l {
+	status = "okay";
+};
 
 &gpioc_h {
 	status = "okay";
@@ -196,7 +206,7 @@
 	status = "okay";
 };
 
-&gpiob_l {
+&gpioe_l {
 	status = "okay";
 };
 

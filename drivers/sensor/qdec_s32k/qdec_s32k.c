@@ -14,14 +14,22 @@
 #include <zephyr/sys/arch_interface.h>
 #include <zephyr/timing/timing.h>
 
-#define LOG_MODULE_NAME nxp_qdec_s32k
-#define INDEX_CHANNEL 22U
-#define EMIOS_CW_CHANNEL 6U
-#define EMIOS_CCW_CHANNEL 7U
-#define COUNTS_PER_ENC_PULSE 4U
-#define EMIOS_CHANNEL_COUNT 3U
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
-LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_SENSOR_LOG_LEVEL);
+#define EMIOS_CHANNEL_COUNT 2U
+#define EMIOS_CW_CH_IDX 0U
+#define EMIOS_CCW_CH_IDX 1U
+
+/* LCU LUT control values for each of the 4 LC outputs */
+/* These values decide the direction of motor rotation */
+#define LCU_O0_LUT 0xAAAA
+#define LCU_O1_LUT 0xCCCC
+#define LCU_O2_LUT 0x4182
+#define LCU_O3_LUT 0x2814
+
+LOG_MODULE_REGISTER(qdec_s32k, CONFIG_SENSOR_LOG_LEVEL);
 
 #include <Emios_Icu_Ip.h>
 #include <Trgmux_Ip.h>
@@ -33,25 +41,26 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_SENSOR_LOG_LEVEL);
 #define EMIOS_NXP_S32_NODE(n) DT_NODELABEL(emios##n)
 
 struct qdec_s32k_config {
-	uint8_t trgmux_inst;
 	uint8_t lcu_inst;
 	uint8_t emios_inst;
-	uint16_t encoder_pulses;
+	uint8_t emios_channels[EMIOS_CHANNEL_COUNT];
+	uint16_t lcu_rise_fall_filter;
+	uint16_t lcu_glitch_filter;
 	const struct pinctrl_dev_config *pincfg;
 	const eMios_Icu_Ip_ConfigType *emios_config;
 	const Trgmux_Ip_InitType *trgmux_config;
 	const Lcu_Ip_InitType *lcu_config;
 	const struct device *clock_dev;
 	clock_control_subsys_t clock_subsys;
-	uint16_t motor_to_gearbox_ratio;
+	size_t trgmux_maps_len;
+	int trgmux_maps[];
 };
 
 struct qdec_s32k_data {
 	uint32_t counterCW;
 	uint32_t counterCCW;
 	int32_t abs_counter;
-	uint16_t counts_per_revolution;
-	uint32_t counter_index;
+	float micro_ticks_per_rev;
 	uint32_t Clockwise_overflow_count;
 	uint32_t CounterCW_overflow_count;
 	uint32_t ticks_per_sec;
@@ -67,33 +76,20 @@ static int qdec_s32k_fetch(const struct device *dev, enum sensor_channel ch)
 	}
 
 	static uint32_t prev_time = 0;
-	static int32_t prev_abs_count = 0;
 
-	data->counterCW = (uint32_t)(Emios_Icu_Ip_GetEdgeNumbers(config->emios_inst, EMIOS_CW_CHANNEL)); /* CW counter */
-	data->counterCCW = (uint32_t)(Emios_Icu_Ip_GetEdgeNumbers(config->emios_inst, EMIOS_CCW_CHANNEL)); /* CCW counter */
-	data->counter_index = (uint32_t)(Emios_Icu_Ip_GetEdgeNumbers(config->emios_inst, INDEX_CHANNEL)); /* Z or Index Pulse */
-	data->Clockwise_overflow_count = Emios_Icu_Ip_GetOverflowCount(config->emios_inst, EMIOS_CW_CHANNEL);
-	data->CounterCW_overflow_count = Emios_Icu_Ip_GetOverflowCount(config->emios_inst, EMIOS_CCW_CHANNEL);
+	data->counterCW = (uint32_t)(Emios_Icu_Ip_GetEdgeNumbers(config->emios_inst, config->emios_channels[EMIOS_CW_CH_IDX])); /* CW counter */
+	data->counterCCW = (uint32_t)(Emios_Icu_Ip_GetEdgeNumbers(config->emios_inst, config->emios_channels[EMIOS_CCW_CH_IDX])); /* CCW counter */
+	data->Clockwise_overflow_count = Emios_Icu_Ip_GetOverflowCount(config->emios_inst, config->emios_channels[EMIOS_CW_CH_IDX]); /* CW Counter Overflow Counter */
+	data->CounterCW_overflow_count = Emios_Icu_Ip_GetOverflowCount(config->emios_inst, config->emios_channels[EMIOS_CCW_CH_IDX]); /* CCW Counter Overflow Counter */
 
 	uint32_t curr_time = k_uptime_get();
-	uint32_t time_diff_ms = curr_time - prev_time;
 	prev_time = curr_time;
 
  	data->abs_counter = (int32_t)(
 		+ (data->counterCW  + (EMIOS_ICU_IP_COUNTER_MASK * data->Clockwise_overflow_count))
 		- (data->counterCCW + (EMIOS_ICU_IP_COUNTER_MASK * data->CounterCW_overflow_count)));
 
-	data->ticks_per_sec = abs(data->abs_counter - prev_abs_count) * MSEC_PER_SEC / time_diff_ms;
-	prev_abs_count = data->abs_counter;
-
-	uint32 freq_enc_hz = data->ticks_per_sec / COUNTS_PER_ENC_PULSE,
-		motor_revs_per_sec = freq_enc_hz / config->encoder_pulses,
-		gearbox_revs_per_min = motor_revs_per_sec * 10 * SEC_PER_MIN / config->motor_to_gearbox_ratio,
-		wheel_revs_per_min = data->ticks_per_sec * SEC_PER_MIN / data->counts_per_revolution;
-
-	printk("Abs_edges_per_sec = %u, freq_enc_hz = %u, motor_revs_per_sec = %u, gearbox_revs_per_min = %u, wheel_revs_per_min = %u\n",
-		data->ticks_per_sec, freq_enc_hz, motor_revs_per_sec, gearbox_revs_per_min, wheel_revs_per_min);
-	printk("\nABS_EDGE_COUNT = %d CW = %u OverFlow_CW = %u CCW = %u Overflow_CCW = %u\n",
+	LOG_DBG("ABS_COUNT = %d CW = %u OverFlow_CW = %u CCW = %u Overflow_CCW = %u",
 		data->abs_counter, data->counterCW, data->Clockwise_overflow_count, data->counterCCW, data->CounterCW_overflow_count);
 
 	return 0;
@@ -104,10 +100,11 @@ static int qdec_s32k_ch_get(const struct device *dev, enum sensor_channel ch,
 {
 	struct qdec_s32k_data *data = dev->data;
 
+	double rotation = (data->abs_counter * 2.0 * M_PI) / data->micro_ticks_per_rev;
+
 	switch (ch) {
 	case SENSOR_CHAN_ROTATION:
-		sensor_value_from_float(val,
-			(data->abs_counter * 360.0f) / data->counts_per_revolution);
+		sensor_value_from_double(val, rotation);
 		break;
 	default:
 		return -ENOTSUP;
@@ -126,22 +123,29 @@ static int qdec_s32k_initialize(const struct device *dev)
 	const struct qdec_s32k_config *config = dev->config;
 	uint32_t rate;
 
-	pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
-
-	if (Trgmux_Ip_Init(config->trgmux_config)) {
-		 LOG_ERR("Could not initialize Trgmux");
+	if(config->trgmux_maps_len != 4 ||
+	   config->trgmux_maps[0] > SIUL2_MAX_NUM_OF_IMCR_REG ||
+	   config->trgmux_maps[2] > SIUL2_MAX_NUM_OF_IMCR_REG) {
+		LOG_ERR("Wrong Trgmux config");
 		return -EINVAL;
 	}
 
-	/* Assign eMIOS0_CH6 input to TRGMUX_OUT_37 */
-	IP_SIUL2->IMCR[54] = SIUL2_IMCR_SSS(3U);
+	pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
 
-	/* Assign eMIOS0_CH7 input to TRGMUX_OUT_38 */
-	IP_SIUL2->IMCR[55] = SIUL2_IMCR_SSS(4U);
+	if (Trgmux_Ip_Init(config->trgmux_config)) {
+		LOG_ERR("Could not initialize Trgmux");
+		return -EINVAL;
+	}
 
-	/* Drive eMIOS0 CH6 and CH7 using FlexIO */
-	IP_SIUL2->MSCR[17] = SIUL2_MSCR_SSS(7U);
-	IP_SIUL2->MSCR[135] = SIUL2_MSCR_SSS(7U);
+	/* Assign eMIOS0 input to TRGMUX_OUT */
+	IP_SIUL2->IMCR[config->trgmux_maps[0]] = SIUL2_IMCR_SSS(config->trgmux_maps[1]);
+
+	/* Assign eMIOS0 input to TRGMUX_OUT */
+	IP_SIUL2->IMCR[config->trgmux_maps[2]] = SIUL2_IMCR_SSS(config->trgmux_maps[3]);
+
+	LOG_DBG("TRGMUX ACCESS Input[0] =%d Output[0]=%d",
+		config->trgmux_config->paxLogicTrigger[0]->Input,
+		config->trgmux_config->paxLogicTrigger[0]->Output);
 
 	if (Lcu_Ip_Init(config->lcu_config)) {
 		LOG_ERR("Could not initialize Lcu");
@@ -160,23 +164,15 @@ static int qdec_s32k_initialize(const struct device *dev)
 	EncLcuEnable[3].Value = 1U;
 	Lcu_Ip_SetSyncOutputEnable(EncLcuEnable, 4U);
 
-	if (Emios_Icu_Ip_Init(0U, config->emios_config)) {
-		LOG_ERR("Could not initialize eMIOS");
-		return -EINVAL;
-	}
+	Emios_Icu_Ip_SetInitialCounterValue(config->emios_inst, config->emios_channels[EMIOS_CW_CH_IDX], (uint32_t)0x1U);
+	Emios_Icu_Ip_SetInitialCounterValue(config->emios_inst, config->emios_channels[EMIOS_CCW_CH_IDX], (uint32_t)0x1U);
 
-	Emios_Icu_Ip_SetInitialCounterValue(config->emios_inst, EMIOS_CW_CHANNEL, (uint32_t)0x1U);
-	Emios_Icu_Ip_SetInitialCounterValue(config->emios_inst, EMIOS_CCW_CHANNEL, (uint32_t)0x1U);
-	Emios_Icu_Ip_SetInitialCounterValue(config->emios_inst, INDEX_CHANNEL, (uint32_t)0x1U);
-
-	Emios_Icu_Ip_SetMaxCounterValue(config->emios_inst, EMIOS_CW_CHANNEL, EMIOS_ICU_IP_COUNTER_MASK);
-	Emios_Icu_Ip_SetMaxCounterValue(config->emios_inst, EMIOS_CCW_CHANNEL, EMIOS_ICU_IP_COUNTER_MASK);
-	Emios_Icu_Ip_SetMaxCounterValue(config->emios_inst, INDEX_CHANNEL, EMIOS_ICU_IP_COUNTER_MASK);
+	Emios_Icu_Ip_SetMaxCounterValue(config->emios_inst, config->emios_channels[EMIOS_CW_CH_IDX], EMIOS_ICU_IP_COUNTER_MASK);
+	Emios_Icu_Ip_SetMaxCounterValue(config->emios_inst, config->emios_channels[EMIOS_CCW_CH_IDX], EMIOS_ICU_IP_COUNTER_MASK);
 
 	/* This API sets MCB/EMIOS_ICU_MODE_EDGE_COUNTER mode */
-	Emios_Icu_Ip_EnableEdgeCount(config->emios_inst, EMIOS_CW_CHANNEL);
-	Emios_Icu_Ip_EnableEdgeCount(config->emios_inst, EMIOS_CCW_CHANNEL);
-	Emios_Icu_Ip_EnableEdgeCount(config->emios_inst, INDEX_CHANNEL);
+	Emios_Icu_Ip_EnableEdgeCount(config->emios_inst, config->emios_channels[EMIOS_CW_CH_IDX]);
+	Emios_Icu_Ip_EnableEdgeCount(config->emios_inst, config->emios_channels[EMIOS_CCW_CH_IDX]);
 
 	clock_control_get_rate(config->clock_dev, config->clock_subsys, &rate);
 	return 0;
@@ -225,6 +221,8 @@ static int qdec_s32k_initialize(const struct device *dev)
 	};
 
 #define LCU_IP_INIT_CONFIG(n)	\
+	const uint16_t lcu_rise_fall_filter = DT_INST_PROP(n, lcu_rise_fall_filter);		\
+	const uint16_t lcu_glitch_filter = DT_INST_PROP(n, lcu_glitch_filter);		\
 	const Lcu_Ip_LogicInputConfigType LogicInput0Cfg = LogicInputCfg_Common(LCU_IP_MUX_SEL_LU_IN_0)		\
 	const Lcu_Ip_LogicInputConfigType LogicInput1Cfg = LogicInputCfg_Common(LCU_IP_MUX_SEL_LU_IN_1)		\
 	const Lcu_Ip_LogicInputConfigType LogicInput2Cfg = LogicInputCfg_Common(LCU_IP_MUX_SEL_LU_OUT_0)		\
@@ -242,10 +240,10 @@ static int qdec_s32k_initialize(const struct device *dev)
 		&LogicInput3_Config,		\
 	};		\
 																											\
-	const Lcu_Ip_LogicOutputConfigType LogicOutput0Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_DISABLE, 0XAAAAU, 5, 5)	\
-	const Lcu_Ip_LogicOutputConfigType LogicOutput1Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_DISABLE, 0XCCCCU, 5, 5)	\
-	const Lcu_Ip_LogicOutputConfigType LogicOutput2Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_ENABLE, 0X4182U, 2, 2)	\
-	const Lcu_Ip_LogicOutputConfigType LogicOutput3Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_ENABLE, 0X2814U, 2, 2)	\
+	const Lcu_Ip_LogicOutputConfigType LogicOutput0Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_DISABLE, LCU_O0_LUT, lcu_rise_fall_filter, lcu_rise_fall_filter)	\
+	const Lcu_Ip_LogicOutputConfigType LogicOutput1Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_DISABLE, LCU_O1_LUT, lcu_rise_fall_filter, lcu_rise_fall_filter)	\
+	const Lcu_Ip_LogicOutputConfigType LogicOutput2Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_ENABLE, LCU_O2_LUT, lcu_glitch_filter, lcu_glitch_filter)	\
+	const Lcu_Ip_LogicOutputConfigType LogicOutput3Cfg = LogicOutputCfg_Common(LCU_IP_DEBUG_ENABLE, LCU_O3_LUT, lcu_glitch_filter, lcu_glitch_filter)	\
 																											\
 	const Lcu_Ip_LogicOutputType LogicOutput0_Config = LogicOutput_Config_Common(LogicOutput0Cfg, 0U)	\
 	const Lcu_Ip_LogicOutputType LogicOutput1_Config = LogicOutput_Config_Common(LogicOutput1Cfg, 1U)	\
@@ -348,9 +346,8 @@ static int qdec_s32k_initialize(const struct device *dev)
 #define EMIOS_ICU_IP_CONFIG(n)								\
 	const uint8_t emios_channels[EMIOS_CHANNEL_COUNT] = DT_INST_PROP(n, emios_channels);		\
 	const eMios_Icu_Ip_ChannelConfigType eMios_Icu_Ip_ChannelConfig[EMIOS_CHANNEL_COUNT] = {	\
-		eMios_Icu_Ip_ChannelConfig_Common(emios_channels[0]),			\
-		eMios_Icu_Ip_ChannelConfig_Common(emios_channels[1]),			\
-		eMios_Icu_Ip_ChannelConfig_Common(emios_channels[2]),			\
+		eMios_Icu_Ip_ChannelConfig_Common(emios_channels[EMIOS_CW_CH_IDX]),			\
+		eMios_Icu_Ip_ChannelConfig_Common(emios_channels[EMIOS_CCW_CH_IDX]),			\
 	};												\
 	const eMios_Icu_Ip_ConfigType eMios_Icu_Ip_Config = {	\
 		.nNumChannels = EMIOS_CHANNEL_COUNT,				\
@@ -360,7 +357,7 @@ static int qdec_s32k_initialize(const struct device *dev)
 #define QDEC_S32K_INIT(n)																		\
 																								\
 	static struct qdec_s32k_data qdec_s32k_##n##_data = {                               		\
-		.counts_per_revolution = DT_INST_PROP(n, counts_per_revolution),                		\
+		.micro_ticks_per_rev = (float)(DT_INST_PROP(n, micro_ticks_per_rev)/1000000),                 \
 		.counterCW = 1,                                                                 		\
 		.counterCCW = 1,                                                                		\
 		.Clockwise_overflow_count = 0,                                                  		\
@@ -373,8 +370,6 @@ static int qdec_s32k_initialize(const struct device *dev)
 	LCU_IP_INIT_CONFIG(n)																		\
 																								\
 	static const struct qdec_s32k_config qdec_s32k_##n##_config = {                     		\
-		.trgmux_inst = DT_INST_PROP(n, trgmux_inst),                                    		\
-		.lcu_inst = DT_INST_PROP(n, lcu_inst),                                          		\
 		.emios_inst = DT_INST_PROP(n, emios_inst),                                      		\
 		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),                                    		\
 		.emios_config = &eMios_Icu_Ip_Config,													\
@@ -383,8 +378,11 @@ static int qdec_s32k_initialize(const struct device *dev)
 		.clock_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR(EMIOS_NXP_S32_NODE(n))),              		\
 		.clock_subsys =                                                                 		\
 			(clock_control_subsys_t)DT_CLOCKS_CELL(EMIOS_NXP_S32_NODE(n), name),        		\
-		.encoder_pulses = DT_INST_PROP(n, encoder_pulses),                              		\
-		.motor_to_gearbox_ratio = DT_INST_PROP(n, motor_to_gearbox_ratio),              		\
+		.lcu_rise_fall_filter = DT_INST_PROP(n, lcu_rise_fall_filter),                          \
+		.lcu_glitch_filter = DT_INST_PROP(n, lcu_glitch_filter),                              	\
+		.emios_channels = {DT_INST_PROP_BY_IDX(n, emios_channels, 0), DT_INST_PROP_BY_IDX(n, emios_channels, 1) }, \
+		.trgmux_maps_len = DT_INST_PROP_LEN(n, trgmux_maps),	\
+		.trgmux_maps = DT_INST_PROP(n, trgmux_maps),		\
 	};                                                                                  		\
 																								\
 	SENSOR_DEVICE_DT_INST_DEFINE(n, qdec_s32k_initialize, NULL, &qdec_s32k_##n##_data,			\
