@@ -24,18 +24,25 @@ properties:
 
   clk-divider:
     type: int
-    description: Main clock divider for I3C
-    required: true
+    default: 0
+    description: |
+      Main clock divider for I3C. If not specified, the default value
+      will be used if changing clock divider is supported by the SoC.
 
   clk-divider-tc:
     type: int
-    description: TC clock divider for I3C
-    required: true
+    default: 0
+    description: |
+      Slow time control clock divider for I3C. If not specified, the
+      default value will be used if changing clock divider is supported
+      by the SoC.
 
   clk-divider-slow:
     type: int
-    description: Slow clock divider for I3C
-    required: true
+    default: 0
+    description: |
+      Slow clock divider for I3C. If not specified, the default value
+      will be used if changing clock divider is supported by the SoC.
 
   disable-open-drain-high-pp:
     type: boolean
