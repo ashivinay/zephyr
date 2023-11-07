@@ -292,9 +292,15 @@
 		flexio0: flexio@40324000 {
 			compatible = "nxp,mcux-flexio";
 			reg = <0x40324000 0x4000>;
-			//interrupts = <141 0>;
+			interrupts = <139 0>;
 			clocks = <&clock NXP_S32_FLEXIO0_CLK>;
 			status = "disabled";
+
+			pwm {
+			    compatible = "nxp,flexio-pwm";
+				#pwm-cells = <3>;
+				status = "disabled";
+			};
 		};
 
 		lpuart0: uart@40328000 {

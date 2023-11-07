@@ -147,6 +147,10 @@ static int qdec_s32k_initialize(const struct device *dev)
 		config->trgmux_config->paxLogicTrigger[0]->Input,
 		config->trgmux_config->paxLogicTrigger[0]->Output);
 
+    /* Drive eMIOS0 CH6 and CH7 using FlexIO */
+    IP_SIUL2->MSCR[17] = SIUL2_MSCR_SSS(7U);
+    IP_SIUL2->MSCR[135] = SIUL2_MSCR_SSS(7U);
+
 	if (Lcu_Ip_Init(config->lcu_config)) {
 		LOG_ERR("Could not initialize Lcu");
 		return -EINVAL;

@@ -577,24 +577,31 @@
 };
 
 &flexio0 {
-/*
-	pwm_6 {
-		channel = <6>;
-		pwm-mode = "OPWFMB";
-		period = <65535>;
-		duty-cycle = <0>;
-		prescaler = <8>;
-		polarity = "ACTIVE_HIGH";
-	};
+	status = "okay";
+	
+    flexio_pwm: pwm {
+	    pinctrl-0 = <&flexio_default>;
+    	pinctrl-names = "default";
+	    status = "okay";
 
-	pwm_7 {
-		channel = <7>;
-		pwm-mode = "OPWFMB";
-		period = <65535>;
-		duty-cycle = <0>;
-		prescaler = <8>;
-		polarity = "ACTIVE_HIGH";
-	};*/
+    	pwm_6 {
+	    	channel = <6>;
+		    pwm-mode = "OPWFMB";
+    		period = <65535>;
+	    	duty-cycle = <0>;
+		    prescaler = <8>;
+    		polarity = "ACTIVE_HIGH";
+	    };
+
+    	pwm_7 {
+	    	channel = <7>;
+		    pwm-mode = "OPWFMB";
+    		period = <65535>;
+	    	duty-cycle = <0>;
+		    prescaler = <8>;
+    		polarity = "ACTIVE_HIGH";
+	    };
+    };
 };
 
 &edma0 {
