@@ -1,0 +1,63 @@
+/*
+ * Copyright 2023 NXP
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Logic Trigger Numbers. See Trgmux_Ip_Init_PBcfg.h */
+#define TRGMUX_LOGIC_GROUP_0_TRIGGER_0 (0) /* Logic Trigger 0 */
+#define TRGMUX_LOGIC_GROUP_0_TRIGGER_1 (1) /* Logic Trigger 1 */
+#define TRGMUX_LOGIC_GROUP_1_TRIGGER_0 (2) /* Logic Trigger 2 */
+#define TRGMUX_LOGIC_GROUP_1_TRIGGER_1 (3) /* Logic Trigger 3 */
+
+/*-----------------------------------------------
+ * TRGMUX HARDWARE TRIGGER INPUT
+ * See Trgmux_Ip_Cfg_Defines.h
+ *-----------------------------------------------
+ */
+#define TRGMUX_IP_INPUT_SIUL2_IN0  (60)
+#define TRGMUX_IP_INPUT_SIUL2_IN1  (61)
+#define TRGMUX_IP_INPUT_SIUL2_IN2  (62)
+#define TRGMUX_IP_INPUT_SIUL2_IN3  (63)
+#define TRGMUX_IP_INPUT_SIUL2_IN4  (64)
+#define TRGMUX_IP_INPUT_SIUL2_IN5  (65)
+#define TRGMUX_IP_INPUT_SIUL2_IN6  (66)
+#define TRGMUX_IP_INPUT_SIUL2_IN7  (67)
+#define TRGMUX_IP_INPUT_SIUL2_IN8  (68)
+#define TRGMUX_IP_INPUT_SIUL2_IN9  (69)
+#define TRGMUX_IP_INPUT_SIUL2_IN10 (70)
+#define TRGMUX_IP_INPUT_SIUL2_IN11 (71)
+#define TRGMUX_IP_INPUT_SIUL2_IN12 (72)
+#define TRGMUX_IP_INPUT_SIUL2_IN13 (73)
+#define TRGMUX_IP_INPUT_SIUL2_IN14 (74)
+#define TRGMUX_IP_INPUT_SIUL2_IN15 (75)
+
+#define TRGMUX_IP_INPUT_LCU1_LC0_OUT_I0 (105)
+#define TRGMUX_IP_INPUT_LCU1_LC0_OUT_I1 (106)
+#define TRGMUX_IP_INPUT_LCU1_LC0_OUT_I2 (107)
+#define TRGMUX_IP_INPUT_LCU1_LC0_OUT_I3 (108)
+
+/*-----------------------------------------------
+ *  TRGMUX HARDWARE TRIGGER OUTPUT
+ *  See Trgmux_Ip_Cfg_Defines.h
+ *-----------------------------------------------
+ */
+#define TRGMUX_IP_OUTPUT_LCU1_0_INP_I0 (144)
+#define TRGMUX_IP_OUTPUT_LCU1_0_INP_I1 (145)
+#define TRGMUX_IP_OUTPUT_LCU1_0_INP_I2 (146)
+#define TRGMUX_IP_OUTPUT_LCU1_0_INP_I3 (147)
+
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH1_4_IPP_IND_CH1    (32)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH1_4_IPP_IND_CH2    (33)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH1_4_IPP_IND_CH3    (34)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH1_4_IPP_IND_CH4    (35)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH5    (36)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH6    (37)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH7    (38)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH9    (39)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH10_13_IPP_IND_CH10 (40)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH10_13_IPP_IND_CH11 (41)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH10_13_IPP_IND_CH12 (42)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH10_13_IPP_IND_CH13 (43)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH14_15_IPP_IND_CH14 (44)
+#define TRGMUX_IP_OUTPUT_EMIOS0_CH14_15_IPP_IND_CH15 (45)

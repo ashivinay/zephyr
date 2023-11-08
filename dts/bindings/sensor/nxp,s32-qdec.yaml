@@ -1,0 +1,112 @@
+# Copyright 2023 NXP
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Quadrature Decoder driver which processes encoder signals to determine motor revs
+
+  with the cooperation of S32K - eMIOS, TRGMUX and LCU modules.
+
+  The sensor qdec application can be used for testing this driver.
+
+  The following example uses TRGMUX IN2 and IN3 to connect to LCU1 LC0 I0 and I1.
+
+  LCU1 LC0 O2 and O3 connect to eMIOS0 CH6(Clockwise rotation) and
+
+  CH7(Counter Clockwise rotation) via TRGMUX_INT_OUT37 and TRGMUX_INT_OUT38
+
+  micro-ticks-per-rev is set as per vehicle gearbox reduction.
+
+  lcu output filters are set to capture maximum speed sensitivity and avoid channel noise.
+
+   qdec0 {
+        compatible = "nxp,qdec-s32";
+        pinctrl-0 = <&qdec_s32k>;
+        pinctrl-names = "default";
+        micro-ticks-per-rev = <685440000>;
+        status = "okay";
+        trgmux-inst = <0>;
+        trgmux-io-config =
+            <0 TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH6 TRGMUX_IP_INPUT_LCU1_LC0_OUT_I2>,
+            <1 TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH7 TRGMUX_IP_INPUT_LCU1_LC0_OUT_I3>,
+            <2 TRGMUX_IP_OUTPUT_LCU1_0_INP_I0            TRGMUX_IP_INPUT_SIUL2_IN2>,
+            <3 TRGMUX_IP_OUTPUT_LCU1_0_INP_I1            TRGMUX_IP_INPUT_SIUL2_IN3>;
+        trgmux-maps = < 54 3 >, /* TRGMUX_OUT_37 <-> eMIOS0_CH6 */
+           < 55 4 >; /* TRGMUX_OUT_38 <-> eMIOS0_CH7 */
+        lcu_inst = <1>;
+        lcu-output-filter-config =
+            /* LCU Out HW ID, Rise Filter, Fall Filter */
+            <0 5 5>, /* LCU O0 */
+            <1 5 5>, /* LCU O1 */
+            <2 2 2>, /* LCU O2 */
+            <3 2 2>; /* LCU O3 */
+        emios = <&emios0>;
+        emios-channels = <6 7>;
+   };
+
+compatible: "nxp,qdec-s32"
+
+include: [pinctrl-device.yaml, sensor-device.yaml]
+
+properties:
+  micro-ticks-per-rev:
+    type: int
+    description: |
+      This is a number that is used to determine how many revolutions * 1000000
+      were done based on the current counter's value.
+
+  trgmux-inst:
+    type: int
+    enum: [0, 1]
+    description: |
+      This gives the hardware instance of TRGMUX module.
+
+  trgmux-io-config:
+    type: array
+    description: |
+      This gives the logic triggers configuration of TRGMUX module.
+      It contains 3 values for each of the 4 logic triggers used:
+        logic trigger number, output, input.
+      Hence, it's length should be '12'.
+      Ex:
+        trgmux-io-config =
+          <0 TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH6 TRGMUX_IP_INPUT_LCU1_LC0_OUT_I2>,
+          <1 TRGMUX_IP_OUTPUT_EMIOS0_CH5_9_IPP_IND_CH7 TRGMUX_IP_INPUT_LCU1_LC0_OUT_I3>,
+          <2 TRGMUX_IP_OUTPUT_LCU1_0_INP_I0            TRGMUX_IP_INPUT_SIUL2_IN2>,
+          <3 TRGMUX_IP_OUTPUT_LCU1_0_INP_I1            TRGMUX_IP_INPUT_SIUL2_IN3>;
+
+  lcu_inst:
+    type: int
+    description: |
+      This gives the hardware instance of LCU module.
+
+  emios:
+    type: phandle
+    description: |
+      phandle to the eMIOS node.
+
+  lcu-output-filter-config:
+    type: array
+    description: |
+      This array gives the configuration for each of the four outputs of LCU module.
+      It contains the following for each output: hardware output id, rise filter and fall filter.
+      The filters specify the delay in terms of CORE_CLK between the input and output line of LC.
+        We use this delay to generate short pulses at the rising and falling edges of input pulse.
+      It's length should be '12' - 3 entries for each of the four LCU outputs.
+      Ex: lcu-output-filter-config =
+        /* LCU Out HW ID, Rise Filter, Fall Filter */
+        <0 5 5>, /* LCU O0 */
+        <1 5 5>, /* LCU O1 */
+        <2 2 2>, /* LCU O2 */
+        <3 2 2>; /* LCU O3 */
+
+  emios-channels:
+    type: array
+    description: |
+      This is the array containing 2 emios channel TypeG numbers used by the qdec.
+      See Table 342 in S32K3XXRM for more information
+
+  trgmux-maps:
+    type: array
+    description: |
+      Trgmux input and output mappings. Input is followed by the output.
+      See S32K3XXRM S32K3XX_IOMUX.xlsx for more information
