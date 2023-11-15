@@ -41,4 +41,12 @@ config POWER_DOMAIN_GPIO_MONITOR
 	depends on GPIO
 	select DEVICE_DEPS
 
+config POWER_DOMAIN_DEVICEONOFF
+	bool "Turn on devices"
+	default y
+	depends on DT_HAS_POWER_DOMAIN_DEVICEONOFF_ENABLED
+	select DEVICE_DEPS
+	help
+	  Generic power domain control to turn on devices
+
 endif
