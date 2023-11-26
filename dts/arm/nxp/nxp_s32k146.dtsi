@@ -59,11 +59,3 @@
 &lpspi2 {
 	clocks = <&clock NXP_S32_LPSPI2_CLK>;
 };
-
-&flexcan1 {
-	clocks = <&clock NXP_S32_FLEXCAN1_CLK>;
-};
-
-&flexcan2 {
-	clocks = <&clock NXP_S32_FLEXCAN2_CLK>;
-};
