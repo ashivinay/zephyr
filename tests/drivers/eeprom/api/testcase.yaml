@@ -14,6 +14,7 @@ tests:
       - qemu_x86
       - nucleo_l152re
       - nucleo_l073rz
+      - ucans32k1sic
     integration_platforms:
       - qemu_x86
   drivers.eeprom.api.w_at2x_emul:
