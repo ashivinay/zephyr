@@ -378,6 +378,49 @@ static void mcux_ftm_capture_second_edge(const struct device *dev, uint32_t chan
 	}
 }
 
+#if defined(CONFIG_PWM_MCUX_FTM_HAS_SEPARATE_IRQ)
+static void mcux_ftm_isr_overflow(const struct device *dev)
+{
+	const struct mcux_ftm_config *config = dev->config;
+	struct mcux_ftm_data *data = dev->data;
+	uint32_t flags;
+
+	flags = FTM_GetStatusFlags(config->base);
+	if (flags & kFTM_TimeOverflowFlag) {
+		data->overflows++;
+		FTM_ClearStatusFlags(config->base, kFTM_TimeOverflowFlag);
+	}
+}
+
+static void mcux_ftm_isr_channel(const struct device *dev, uint32_t channel)
+{
+	const struct mcux_ftm_config *config = dev->config;
+	struct mcux_ftm_data *data = dev->data;
+	bool overflow = false;
+	uint32_t flags;
+	uint32_t irqs;
+	uint16_t cnt;
+	uint32_t ch;
+
+	flags = FTM_GetStatusFlags(config->base);
+	irqs = FTM_GetEnabledInterrupts(config->base);
+	cnt = config->base->CNT;
+
+	if (flags & kFTM_TimeOverflowFlag) {
+		data->overflows++;
+		overflow = true;
+		FTM_ClearStatusFlags(config->base, kFTM_TimeOverflowFlag);
+	}
+
+	if ((flags & BIT(ch)) && (irqs & BIT(ch))) {
+		if (ch & 1) {
+			mcux_ftm_capture_second_edge(dev, ch, cnt, overflow);
+		} else {
+			mcux_ftm_capture_first_edge(dev, ch, cnt, overflow);
+		}
+	}
+}
+#else
 static void mcux_ftm_isr(const struct device *dev)
 {
 	const struct mcux_ftm_config *config = dev->config;
@@ -408,6 +451,7 @@ static void mcux_ftm_isr(const struct device *dev)
 		}
 	}
 }
+#endif /* CONFIG_PWM_MCUX_FTM_HAS_SEPARATE_IRQ */
 #endif /* CONFIG_PWM_CAPTURE */
 
 static int mcux_ftm_get_cycles_per_sec(const struct device *dev,

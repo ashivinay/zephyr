@@ -34,6 +34,8 @@
 };
 
 /delete-node/ &lpi2c1;
+/delete-node/ &ftm6;
+/delete-node/ &ftm7;
 
 &nvic {
 	arm,num-irq-priority-bits = <4>;
@@ -58,4 +60,20 @@
 
 &lpspi2 {
 	clocks = <&clock NXP_S32_LPSPI2_CLK>;
+};
+
+&ftm2 {
+	clocks = <&clock NXP_S32_FTM2_CLK>;
+};
+
+&ftm3 {
+	clocks = <&clock NXP_S32_FTM3_CLK>;
+};
+
+&ftm4 {
+	clocks = <&clock NXP_S32_FTM4_CLK>;
+};
+
+&ftm5 {
+	clocks = <&clock NXP_S32_FTM5_CLK>;
 };

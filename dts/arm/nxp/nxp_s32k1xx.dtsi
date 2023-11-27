@@ -44,6 +44,73 @@
 			status = "disabled";
 		};
 
+		ftm0: ftm@40038000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x40038000 0x1000>;
+			interrupts = <99 0>, <100 0>, <101 0>, <102 0>, <103 0>, <104 0>;
+			interrupt-names = "0-1", "2-3", "4-5", "6-7", "fault", "overflow";
+			clocks = <&clock NXP_S32_FTM0_CLK>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm1: ftm@40039000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x40039000 0x1000>;
+			interrupts = <43 0>;
+			clocks = <&clock NXP_S32_FTM1_CLK>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm2: ftm@4003a000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x4003a000 0x1000>;
+			interrupts = <44 0>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm3: ftm@40026000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x40026000 0x1000>;
+			interrupts = <71 0>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm4: ftm@4006e000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x4006e000 0x1000>;
+			interrupts = <71 0>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm5: ftm@4006f000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x4006f000 0x1000>;
+			interrupts = <71 0>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm6: ftm@40070000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x40070000 0x1000>;
+			interrupts = <71 0>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
+		ftm7: ftm@40071000 {
+			compatible = "nxp,kinetis-ftm";
+			reg = <0x40071000 0x1000>;
+			interrupts = <71 0>;
+			prescaler = <16>;
+			status = "disabled";
+		};
+
 		lpspi0: spi@4002c000 {
 			compatible = "nxp,imx-lpspi";
 			reg = <0x4002c000 0x1000>;
