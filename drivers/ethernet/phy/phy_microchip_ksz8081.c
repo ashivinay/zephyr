@@ -41,8 +41,12 @@ struct mc_ksz8081_config {
 	uint8_t addr;
 	const struct device *mdio_dev;
 	enum ksz8081_interface phy_iface;
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_reset_gpio)
 	const struct gpio_dt_spec reset_gpio;
+#endif
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_interrupt_gpio)
 	const struct gpio_dt_spec interrupt_gpio;
+#endif
 };
 
 struct mc_ksz8081_data {
@@ -389,12 +393,16 @@ static int phy_mc_ksz8081_init(const struct device *dev)
 
 	mdio_bus_enable(config->mdio_dev);
 
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_interrupt_gpio)
 	/* Prevent NAND TREE mode */
 	ret = gpio_pin_configure_dt(&config->interrupt_gpio, GPIO_OUTPUT_ACTIVE);
 	if (ret) {
 		return ret;
 	}
+#endif /* DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_interrupt_gpio) */
 
+
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_reset_gpio)
 	/* Start reset */
 	ret = gpio_pin_configure_dt(&config->reset_gpio, GPIO_OUTPUT_INACTIVE);
 	if (ret) {
@@ -409,6 +417,7 @@ static int phy_mc_ksz8081_init(const struct device *dev)
 	if (ret) {
 		return ret;
 	}
+#endif /* DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_reset_gpio) */
 
 	k_work_init_delayable(&data->phy_monitor_work,
 				phy_mc_ksz8081_monitor_work_handler);
@@ -424,13 +433,27 @@ static const struct ethphy_driver_api mc_ksz8081_phy_api = {
 	.write = phy_mc_ksz8081_write,
 };
 
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_reset_gpio)
+#define RESET_GPIO(n) \
+		.reset_gpio = GPIO_DT_SPEC_INST_GET_OR(n, mc_reset_gpio, {0}),
+#else
+#define RESET_GPIO(n)
+#endif /* reset gpio */
+
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(mc_interrupt_gpio)
+#define INTERRUPT_GPIO(n) \
+		.interrupt_gpio = GPIO_DT_SPEC_INST_GET_OR(n, mc_interrupt_gpio, {0}),
+#else
+#define INTERRUPT_GPIO(n)
+#endif /* interrupt gpio */
+
 #define MICROCHIP_KSZ8081_INIT(n)						\
 	static const struct mc_ksz8081_config mc_ksz8081_##n##_config = {	\
 		.addr = DT_INST_REG_ADDR(n),					\
 		.mdio_dev = DEVICE_DT_GET(DT_INST_PARENT(n)),			\
 		.phy_iface = DT_INST_ENUM_IDX(n, mc_interface_type),		\
-		.reset_gpio = GPIO_DT_SPEC_INST_GET(n, mc_reset_gpio),		\
-		.interrupt_gpio = GPIO_DT_SPEC_INST_GET(n, mc_interrupt_gpio),	\
+		RESET_GPIO(n)							\
+		INTERRUPT_GPIO(n)						\
 	};									\
 										\
 	static struct mc_ksz8081_data mc_ksz8081_##n##_data;			\
